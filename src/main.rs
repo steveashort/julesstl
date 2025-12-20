@@ -1,0 +1,57 @@
+use axum::{
+    routing::{get, post},
+    Router,
+};
+use std::net::SocketAddr;
+use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
+
+mod db;
+mod handlers;
+mod models;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
+
+    let pool = db::init_pool()?;
+
+    // Ingestion App (Port 3000)
+    let ingest_app = Router::new()
+        .route("/", post(handlers::ingest)) // The prompt says ingest endpoint. Usually / or /ingest.
+        // Prompt says "ingest data JSON payloads sent to a localhost:3000 endpoint".
+        // It doesn't specify path. I'll support root POST.
+        .with_state(pool.clone());
+
+    // UI/API App (Port 3001)
+    let api_routes = Router::new()
+        .route("/traffic-lights", get(handlers::list_traffic_lights))
+        .route("/traffic-lights/:class/:tl/history", get(handlers::get_history))
+        .route("/traffic-lights/:class/:tl/metrics", get(handlers::get_metrics))
+        .with_state(pool.clone());
+
+    let ui_app = Router::new()
+        .nest("/api", api_routes)
+        .nest_service("/", ServeDir::new("frontend/dist"))
+        .layer(CorsLayer::permissive());
+
+    let addr_ingest = SocketAddr::from(([0, 0, 0, 0], 3000));
+    let addr_ui = SocketAddr::from(([0, 0, 0, 0], 3001));
+
+    println!("Ingestion listening on {}", addr_ingest);
+    println!("UI listening on {}", addr_ui);
+
+    let server_ingest = axum::serve(
+        tokio::net::TcpListener::bind(addr_ingest).await?,
+        ingest_app,
+    );
+
+    let server_ui = axum::serve(
+        tokio::net::TcpListener::bind(addr_ui).await?,
+        ui_app,
+    );
+
+    let _ = tokio::join!(server_ingest, server_ui);
+
+    Ok(())
+}
