@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
 };
-use crate::{db, models::{IngestPayload, TrafficLightState, MetricRecord}};
+use crate::{db, models::{IngestPayload, TrafficLightState, MetricRecord, IncidentRecord}};
 use std::sync::Arc;
 use serde_json::Value;
 
@@ -22,6 +22,25 @@ pub async fn ingest(
         Err(e) => {
             eprintln!("Failed to ingest: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct IncidentsQuery {
+    hours: Option<u32>,
+}
+
+pub async fn get_incidents(
+    State(pool): State<db::DbPool>,
+    Query(params): Query<IncidentsQuery>,
+) -> Result<Json<Vec<IncidentRecord>>, StatusCode> {
+    let hours = params.hours.unwrap_or(24);
+    match db::get_incidents(pool, hours).await {
+        Ok(incidents) => Ok(Json(incidents)),
+        Err(e) => {
+             eprintln!("Failed to fetch incidents: {}", e);
+             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }

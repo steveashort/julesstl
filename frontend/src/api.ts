@@ -23,6 +23,15 @@ export interface MetricRecord {
   unit?: string;
 }
 
+export interface IncidentRecord {
+  class: string;
+  tl: string;
+  colour: string;
+  start_time: string;
+  duration_seconds: number;
+  description?: string;
+}
+
 export const getTrafficLights = async () => {
   const response = await axios.get<TrafficLightState[]>(`${API_BASE}/traffic-lights`);
   return response.data;
@@ -35,5 +44,10 @@ export const getHistory = async (cls: string, tl: string) => {
 
 export const getMetrics = async (cls: string, tl: string) => {
   const response = await axios.get<MetricRecord[]>(`${API_BASE}/traffic-lights/${cls}/${tl}/metrics`);
+  return response.data;
+};
+
+export const getIncidents = async (hours: number = 24) => {
+  const response = await axios.get<IncidentRecord[]>(`${API_BASE}/reports/incidents?hours=${hours}`);
   return response.data;
 };

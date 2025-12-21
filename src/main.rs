@@ -28,6 +28,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/traffic-lights", get(handlers::list_traffic_lights))
         .route("/traffic-lights/:class/:tl/history", get(handlers::get_history))
         .route("/traffic-lights/:class/:tl/metrics", get(handlers::get_metrics))
+        .route("/reports/incidents", get(handlers::get_incidents))
         .with_state(pool.clone());
 
     let ui_app = Router::new()
@@ -40,6 +41,18 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Ingestion listening on {}", addr_ingest);
     println!("UI listening on {}", addr_ui);
+
+    // Spawn housekeeping task
+    let housekeeping_pool = pool.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+        loop {
+            interval.tick().await;
+            if let Err(e) = db::check_and_update_expirations(housekeeping_pool.clone()).await {
+                eprintln!("Housekeeping error: {}", e);
+            }
+        }
+    });
 
     let server_ingest = axum::serve(
         tokio::net::TcpListener::bind(addr_ingest).await?,

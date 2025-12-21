@@ -11,7 +11,8 @@ const TrafficLightCard: React.FC<Props> = ({ tl }) => {
     'bg-green-500': tl.colour === 'green',
     'bg-yellow-500': tl.colour === 'yellow',
     'bg-red-500': tl.colour === 'red',
-    'bg-gray-500': !['green', 'yellow', 'red'].includes(tl.colour),
+    'bg-purple-500': tl.colour === 'purple',
+    'bg-gray-500': !['green', 'yellow', 'red', 'purple'].includes(tl.colour),
   });
 
   return (

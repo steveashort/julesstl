@@ -52,3 +52,13 @@ pub struct MetricRecord {
     pub metric_type: String,
     pub unit: Option<String>,
 }
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct IncidentRecord {
+    pub class: String,
+    pub tl: String,
+    pub colour: String,
+    pub start_time: String,
+    pub duration_seconds: f64,
+    pub description: Option<String>,
+}

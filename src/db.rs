@@ -133,6 +133,64 @@ pub async fn insert_traffic_light(pool: DbPool, payload: IngestPayload, final_co
     Ok(())
 }
 
+pub async fn get_incidents(pool: DbPool, hours: u32) -> Result<Vec<crate::models::IncidentRecord>> {
+    let pool = pool.clone();
+
+    // Recalculating cutoff in Rust to avoid SQL interval parameter issues
+    let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
+    let cutoff_str = cutoff.to_rfc3339();
+
+    task::spawn_blocking(move || {
+        let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+        let mut stmt = conn.prepare(
+            r#"
+            WITH dur_calc AS (
+                SELECT
+                    class,
+                    tl,
+                    colour,
+                    timestamp,
+                    description,
+                    LEAD(timestamp) OVER (PARTITION BY class, tl ORDER BY timestamp ASC) as next_timestamp
+                FROM traffic_lights
+            )
+            SELECT
+                class,
+                tl,
+                colour,
+                timestamp,
+                COALESCE(
+                    date_diff('second', CAST(timestamp AS TIMESTAMP), CAST(next_timestamp AS TIMESTAMP)),
+                    date_diff('second', CAST(timestamp AS TIMESTAMP), CURRENT_TIMESTAMP)
+                ) as duration_seconds,
+                description
+            FROM dur_calc
+            WHERE
+                colour IN ('yellow', 'red')
+                AND timestamp >= ?
+            ORDER BY timestamp DESC
+            "#
+        )?;
+
+        let incidents_iter = stmt.query_map(params![cutoff_str], |row| {
+             Ok(crate::models::IncidentRecord {
+                class: row.get(0)?,
+                tl: row.get(1)?,
+                colour: row.get(2)?,
+                start_time: row.get(3)?,
+                duration_seconds: row.get(4)?,
+                description: row.get(5)?,
+            })
+        })?;
+
+        let mut incidents = Vec::new();
+        for i in incidents_iter {
+            incidents.push(i?);
+        }
+        Ok(incidents)
+    }).await?
+}
+
 pub async fn get_current_states(pool: DbPool) -> Result<Vec<crate::models::TrafficLightState>> {
     let pool = pool.clone();
     task::spawn_blocking(move || {
@@ -230,4 +288,62 @@ pub async fn get_metrics(pool: DbPool, class: String, tl: String) -> Result<Vec<
         }
         Ok(metrics)
     }).await?
+}
+
+pub async fn check_and_update_expirations(pool: DbPool) -> Result<()> {
+    let pool = pool.clone();
+    task::spawn_blocking(move || {
+        let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+
+        // Find latest state for each traffic light
+        let mut stmt = conn.prepare(
+            r#"
+            WITH ranked_tls AS (
+                SELECT class, tl, colour, timestamp, expires_at, ROW_NUMBER() OVER (PARTITION BY class, tl ORDER BY timestamp DESC) as rn
+                FROM traffic_lights
+            )
+            SELECT class, tl, expires_at
+            FROM ranked_tls
+            WHERE rn = 1 AND colour != 'purple' AND expires_at IS NOT NULL
+            "#
+        )?;
+
+        let tls_to_update: Vec<(String, String, String)> = stmt.query_map([], |row| {
+             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+        let now = chrono::Utc::now();
+
+        for (class, tl, expires_at_str) in tls_to_update {
+            if let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(&expires_at_str) {
+                if expires_at.with_timezone(&chrono::Utc) < now {
+                    // Expired! Insert purple record.
+                    // We use current time as timestamp for the new state.
+                    let timestamp = now.to_rfc3339();
+                    let description = "Expired (Automatic Housekeeping)";
+                    let tags_json = "[]"; // Empty tags for housekeeping update
+
+                    conn.execute(
+                        "INSERT INTO traffic_lights (class, tl, colour, timestamp, expires_at, description, tags) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        params![
+                            class,
+                            tl,
+                            "purple",
+                            timestamp,
+                            None::<String>, // Clear expires_at so it doesn't expire again immediately (though purple check handles it)
+                            description,
+                            tags_json
+                        ],
+                    )?;
+                    println!("Housekeeping: Set {}/{} to purple (expired at {})", class, tl, expires_at_str);
+                }
+            }
+        }
+
+        Ok::<_, anyhow::Error>(())
+    }).await??;
+
+    Ok(())
 }
