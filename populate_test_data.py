@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timedelta
 
 # Configuration
-BASE_URL = "http://localhost:3000"
+BASE_URL = "http://localhost:9000"
 CLASS_NAME = "server"
 TL_NAME = "node1"
 START_TIME = datetime.utcnow() - timedelta(hours=10) # Start 10 hours ago
