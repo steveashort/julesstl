@@ -12,7 +12,7 @@ const Dashboard: React.FC = () => {
   // Filters state
   const [selectedClass, setSelectedClass] = useState<string>('');
   const [selectedColour, setSelectedColour] = useState<string>('');
-  const [selectedTag, setSelectedTag] = useState<string>('');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
   useEffect(() => {
     getTrafficLights().then(data => {
@@ -39,10 +39,10 @@ const Dashboard: React.FC = () => {
     return tls.filter(tl => {
       if (selectedClass && tl.class !== selectedClass) return false;
       if (selectedColour && tl.colour !== selectedColour) return false;
-      if (selectedTag && !(tl.tags || []).includes(selectedTag)) return false;
+      if (selectedTags.length > 0 && !selectedTags.every(t => (tl.tags || []).includes(t))) return false;
       return true;
     });
-  }, [tls, selectedClass, selectedColour, selectedTag]);
+  }, [tls, selectedClass, selectedColour, selectedTags]);
 
   const grouped = useMemo(() => {
     return filteredTls.reduce((acc, tl) => {
@@ -52,39 +52,59 @@ const Dashboard: React.FC = () => {
     }, {} as Record<string, TrafficLightState[]>);
   }, [filteredTls]);
 
+  const toggleTag = (tag: string) => {
+      setSelectedTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+  };
+
   if (loading) return <div className="p-4 dark:text-gray-200">Loading Dashboard...</div>;
 
   return (
     <div className="p-4">
-      <div className="flex flex-col md:flex-row justify-between items-center mb-6">
-        <div className="flex items-center">
-            <h1 className="text-2xl font-bold mb-4 md:mb-0 mr-4 dark:text-white">Traffic Light Dashboard</h1>
-            <button 
-                onClick={() => window.location.hash = '#/incidents'} 
-                className="flex items-center text-red-600 border border-red-600 px-3 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
-            >
-                <AlertTriangle className="w-4 h-4 mr-2" />
-                Incidents Report
-            </button>
+      <div className="flex flex-col gap-4 mb-6">
+        <div className="flex justify-between items-center">
+             <div className="flex items-center">
+                <h1 className="text-2xl font-bold mr-4 dark:text-white">Traffic Light Dashboard</h1>
+                <button 
+                    onClick={() => window.location.hash = '#/incidents'} 
+                    className="flex items-center text-red-600 border border-red-600 px-3 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
+                >
+                    <AlertTriangle className="w-4 h-4 mr-2" />
+                    Incidents
+                </button>
+            </div>
         </div>
 
-        <div className="flex flex-wrap gap-2 items-center bg-gray-50 dark:bg-gray-800 p-3 rounded-lg border dark:border-gray-700">
-          <Filter className="w-5 h-5 text-gray-500 dark:text-gray-400 mr-2" />
-          <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
-            <option value="">All Classes</option>
-            {classes.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select value={selectedColour} onChange={e => setSelectedColour(e.target.value)} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
-            <option value="">All Colours</option>
-            {colours.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select value={selectedTag} onChange={e => setSelectedTag(e.target.value)} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
-            <option value="">All Tags</option>
-            {tags.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          {(selectedClass || selectedColour || selectedTag) && (
-            <button onClick={() => { setSelectedClass(''); setSelectedColour(''); setSelectedTag(''); }} className="text-red-500 text-sm hover:underline ml-2">Clear</button>
-          )}
+        <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg border dark:border-gray-700">
+           <div className="flex flex-wrap gap-2 items-center mb-2">
+              <Filter className="w-5 h-5 text-gray-500 dark:text-gray-400 mr-2" />
+              <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
+                <option value="">All Classes</option>
+                {classes.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <select value={selectedColour} onChange={e => setSelectedColour(e.target.value)} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
+                <option value="">All Colours</option>
+                {colours.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              {(selectedClass || selectedColour || selectedTags.length > 0) && (
+                <button onClick={() => { setSelectedClass(''); setSelectedColour(''); setSelectedTags([]); }} className="text-red-500 text-sm hover:underline ml-2">Clear All</button>
+              )}
+           </div>
+           
+           <div className="flex flex-wrap gap-1 items-center mt-2 border-t dark:border-gray-700 pt-2">
+              <span className="text-xs text-gray-500 mr-2">Tags:</span>
+              {tags.map(t => (
+                  <button 
+                    key={t} 
+                    onClick={() => toggleTag(t)}
+                    className={clsx("px-2 py-0.5 rounded text-xs border transition-colors", {
+                        "bg-blue-600 text-white border-blue-600": selectedTags.includes(t),
+                        "bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600": !selectedTags.includes(t)
+                    })}
+                  >
+                    {t}
+                  </button>
+              ))}
+           </div>
         </div>
       </div>
 
@@ -98,7 +118,7 @@ const Dashboard: React.FC = () => {
         Object.entries(grouped).map(([cls, items]) => (
           <div key={cls} className="mb-8">
             <h2 className="text-xl font-semibold mb-2 dark:text-gray-200">{cls}</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
               {items.map(tl => (
                 <div key={tl.tl} className="cursor-pointer" onClick={() => window.location.hash = `#/details/${tl.class}/${tl.tl}`}>
                   <TrafficLightCard tl={tl} />
@@ -196,6 +216,11 @@ const Details: React.FC<{ cls: string, tl: string }> = ({ cls, tl }) => {
   const [metrics, setMetrics] = useState<MetricRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [chartDomain, setChartDomain] = useState<[number | 'dataMin', number | 'dataMax']>(['dataMin', 'dataMax']);
+
+  const latestTL = useMemo(() => {
+    if (history.length === 0) return null;
+    return [...history].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+  }, [history]);
 
   useEffect(() => {
     setLoading(true);
@@ -420,11 +445,37 @@ const Details: React.FC<{ cls: string, tl: string }> = ({ cls, tl }) => {
                   <button onClick={downloadCsv} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-sm font-medium">Download CSV</button>
               </div>
           </div>
-          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-2">
-            <h1 className="text-2xl font-bold dark:text-white">{cls} / {tl}</h1>
-            <div className="text-sm text-gray-600 dark:text-gray-400 font-mono bg-white dark:bg-gray-800 px-2 py-1 rounded border dark:border-gray-700">
-                {new Date(effectiveDomain.start).toLocaleString()} - {new Date(effectiveDomain.end).toLocaleString()}
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
+                <div>
+                   <h1 className="text-2xl font-bold dark:text-white flex items-center gap-2">
+                       {cls} / {tl}
+                       {latestTL && (
+                           <span className={clsx("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize", {
+                                'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300': latestTL.colour === 'green',
+                                'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300': latestTL.colour === 'yellow',
+                                'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300': latestTL.colour === 'red',
+                                'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300': !['green', 'yellow', 'red'].includes(latestTL.colour),
+                            })}>
+                                {latestTL.colour}
+                           </span>
+                       )}
+                   </h1>
+                   {latestTL?.description && <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{latestTL.description}</p>}
+                </div>
+                <div className="text-sm text-gray-600 dark:text-gray-400 font-mono bg-white dark:bg-gray-800 px-2 py-1 rounded border dark:border-gray-700 whitespace-nowrap">
+                    {new Date(effectiveDomain.start).toLocaleString()} - {new Date(effectiveDomain.end).toLocaleString()}
+                </div>
             </div>
+            {latestTL?.tags && latestTL.tags.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                    {latestTL.tags.map(tag => (
+                        <span key={tag} className="bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400 text-xs px-2 py-0.5 rounded border dark:border-blue-900/30">
+                          {tag}
+                        </span>
+                    ))}
+                </div>
+            )}
           </div>
       </div>
 
