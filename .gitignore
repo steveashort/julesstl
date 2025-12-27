@@ -7,3 +7,4 @@ node_modules/
 frontend/dist/
 dist/
 .DS_Store
+traffic_lights.db.wal
