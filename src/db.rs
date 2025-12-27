@@ -90,10 +90,21 @@ pub fn init_pool() -> Result<DbPool> {
             value DOUBLE,
             value_str VARCHAR,
             metric_type VARCHAR,
-            unit VARCHAR
+            unit VARCHAR,
+            yellow_at DOUBLE,
+            red_at DOUBLE
         );
         "#,
     )?;
+    
+    // Migration: Add columns if they don't exist (simulated by trying to add and ignoring error, 
+    // or better: check if column exists. For DuckDB, simple ALTER IF NOT EXISTS isn't standard SQL everywhere
+    // but DuckDB supports it? No.
+    // We'll just try to ALTER and ignore failure for now as a quick hack for this prototype
+    // since we can't easily query schema catalog in a portable way without more code.
+    // Actually, let's just use `catch_unwind` equivalent or Result ignore.
+    let _ = conn.execute("ALTER TABLE metrics ADD COLUMN yellow_at DOUBLE", []);
+    let _ = conn.execute("ALTER TABLE metrics ADD COLUMN red_at DOUBLE", []);
 
     Ok(Arc::new(pool))
 }
@@ -134,7 +145,9 @@ pub async fn insert_traffic_light(pool: DbPool, payload: IngestPayload, final_co
                     val_num,
                     val_str,
                     metric.metric_type,
-                    metric.unit
+                    metric.unit,
+                    metric.yellow_at,
+                    metric.red_at
                 ])?;
             }
         }
@@ -343,7 +356,7 @@ pub async fn get_metrics(pool: DbPool, class: String, tl: String) -> Result<Vec<
     task::spawn_blocking(move || {
         let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
         let mut stmt = conn.prepare(
-            "SELECT class, tl, timestamp, key, value, value_str, metric_type, unit FROM metrics WHERE class = ? AND tl = ? ORDER BY timestamp ASC"
+            "SELECT class, tl, timestamp, key, value, value_str, metric_type, unit, yellow_at, red_at FROM metrics WHERE class = ? AND tl = ? ORDER BY timestamp ASC"
         )?;
 
         let metrics_iter = stmt.query_map(params![class, tl], |row| {
@@ -356,6 +369,8 @@ pub async fn get_metrics(pool: DbPool, class: String, tl: String) -> Result<Vec<
                 value_str: row.get(5)?,
                 metric_type: row.get(6)?,
                 unit: row.get(7)?,
+                yellow_at: row.get(8)?,
+                red_at: row.get(9)?,
             })
         })?;
 

@@ -3,7 +3,7 @@ import { getTrafficLights, getHistory, getMetrics, getIncidents, TrafficLightSta
 import TrafficLightCard from './components/TrafficLightCard';
 import MetricsChart from './components/MetricsChart';
 import clsx from 'clsx';
-import { Filter, AlertTriangle } from 'lucide-react';
+import { Filter, AlertTriangle, Moon, Sun } from 'lucide-react';
 
 const Dashboard: React.FC = () => {
   const [tls, setTls] = useState<TrafficLightState[]>([]);
@@ -16,29 +16,30 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     getTrafficLights().then(data => {
-      setTls(data);
+      setTls(data || []);
       setLoading(false);
+    }).catch(e => {
+        console.error("Failed to fetch TLs:", e);
+        setLoading(false);
     });
     const interval = setInterval(() => {
-      getTrafficLights().then(setTls);
+      getTrafficLights().then(setTls).catch(console.error);
     }, 5000);
     return () => clearInterval(interval);
   }, []);
 
-  // Compute available options
   const classes = useMemo(() => Array.from(new Set(tls.map(tl => tl.class))).sort(), [tls]);
   const colours = useMemo(() => Array.from(new Set(tls.map(tl => tl.colour))).sort(), [tls]);
   const tags = useMemo(() => {
-    const allTags = tls.flatMap(tl => tl.tags);
+    const allTags = tls.flatMap(tl => tl.tags || []);
     return Array.from(new Set(allTags)).sort();
   }, [tls]);
 
-  // Filter logic
   const filteredTls = useMemo(() => {
     return tls.filter(tl => {
       if (selectedClass && tl.class !== selectedClass) return false;
       if (selectedColour && tl.colour !== selectedColour) return false;
-      if (selectedTag && !tl.tags.includes(selectedTag)) return false;
+      if (selectedTag && !(tl.tags || []).includes(selectedTag)) return false;
       return true;
     });
   }, [tls, selectedClass, selectedColour, selectedTag]);
@@ -51,74 +52,55 @@ const Dashboard: React.FC = () => {
     }, {} as Record<string, TrafficLightState[]>);
   }, [filteredTls]);
 
-  if (loading) return <div className="p-4">Loading...</div>;
+  if (loading) return <div className="p-4 dark:text-gray-200">Loading Dashboard...</div>;
 
   return (
     <div className="p-4">
       <div className="flex flex-col md:flex-row justify-between items-center mb-6">
         <div className="flex items-center">
-            <h1 className="text-2xl font-bold mb-4 md:mb-0 mr-4">Traffic Light Dashboard</h1>
-            <button onClick={() => window.location.hash = '#/incidents'} className="flex items-center text-red-600 border border-red-600 px-3 py-1 rounded hover:bg-red-50">
+            <h1 className="text-2xl font-bold mb-4 md:mb-0 mr-4 dark:text-white">Traffic Light Dashboard</h1>
+            <button 
+                onClick={() => window.location.hash = '#/incidents'} 
+                className="flex items-center text-red-600 border border-red-600 px-3 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
+            >
                 <AlertTriangle className="w-4 h-4 mr-2" />
                 Incidents Report
             </button>
         </div>
 
-        {/* Filter Controls */}
-        <div className="flex flex-wrap gap-2 items-center bg-gray-50 p-3 rounded-lg border">
-          <Filter className="w-5 h-5 text-gray-500 mr-2" />
-
-          <select
-            value={selectedClass}
-            onChange={e => setSelectedClass(e.target.value)}
-            className="border rounded px-2 py-1 text-sm"
-          >
+        <div className="flex flex-wrap gap-2 items-center bg-gray-50 dark:bg-gray-800 p-3 rounded-lg border dark:border-gray-700">
+          <Filter className="w-5 h-5 text-gray-500 dark:text-gray-400 mr-2" />
+          <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
             <option value="">All Classes</option>
             {classes.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
-
-          <select
-            value={selectedColour}
-            onChange={e => setSelectedColour(e.target.value)}
-            className="border rounded px-2 py-1 text-sm"
-          >
+          <select value={selectedColour} onChange={e => setSelectedColour(e.target.value)} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
             <option value="">All Colours</option>
             {colours.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
-
-          <select
-            value={selectedTag}
-            onChange={e => setSelectedTag(e.target.value)}
-            className="border rounded px-2 py-1 text-sm"
-          >
+          <select value={selectedTag} onChange={e => setSelectedTag(e.target.value)} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
             <option value="">All Tags</option>
             {tags.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
-
           {(selectedClass || selectedColour || selectedTag) && (
-            <button
-              onClick={() => { setSelectedClass(''); setSelectedColour(''); setSelectedTag(''); }}
-              className="text-red-500 text-sm hover:underline ml-2"
-            >
-              Clear
-            </button>
+            <button onClick={() => { setSelectedClass(''); setSelectedColour(''); setSelectedTag(''); }} className="text-red-500 text-sm hover:underline ml-2">Clear</button>
           )}
         </div>
       </div>
 
-      <div className="text-sm text-gray-500 mb-4">
+      <div className="text-sm text-gray-500 dark:text-gray-400 mb-4">
         Showing {filteredTls.length} of {tls.length} traffic lights
       </div>
 
       {Object.entries(grouped).length === 0 ? (
-        <div className="text-center text-gray-500 py-10">No traffic lights match your filters.</div>
+        <div className="text-center text-gray-500 py-10 dark:text-gray-400">No traffic lights found.</div>
       ) : (
         Object.entries(grouped).map(([cls, items]) => (
           <div key={cls} className="mb-8">
-            <h2 className="text-xl font-semibold mb-2">{cls}</h2>
+            <h2 className="text-xl font-semibold mb-2 dark:text-gray-200">{cls}</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {items.map(tl => (
-                <div key={tl.tl} className="cursor-pointer" onClick={() => window.location.hash = `/details/${tl.class}/${tl.tl}`}>
+                <div key={tl.tl} className="cursor-pointer" onClick={() => window.location.hash = `#/details/${tl.class}/${tl.tl}`}>
                   <TrafficLightCard tl={tl} />
                 </div>
               ))}
@@ -138,23 +120,22 @@ const IncidentsReport: React.FC = () => {
     useEffect(() => {
         setLoading(true);
         getIncidents(hours).then(data => {
-            setIncidents(data);
+            setIncidents(data || []);
+            setLoading(false);
+        }).catch(e => {
+            console.error(e);
             setLoading(false);
         });
     }, [hours]);
 
     return (
-        <div className="p-4">
-            <button onClick={() => window.location.hash = '/'} className="mb-4 text-blue-500 hover:underline">&larr; Back to Dashboard</button>
+        <div className="p-4 pt-16">
+            <button onClick={() => window.location.hash = '#/'} className="mb-4 text-blue-500 hover:underline">&larr; Back to Dashboard</button>
             <div className="flex justify-between items-center mb-6">
-                <h1 className="text-2xl font-bold">Incidents Report</h1>
+                <h1 className="text-2xl font-bold dark:text-white">Incidents Report</h1>
                 <div className="flex items-center">
-                    <span className="mr-2 text-sm text-gray-600">Time range:</span>
-                    <select
-                        value={hours}
-                        onChange={e => setHours(Number(e.target.value))}
-                        className="border rounded px-2 py-1"
-                    >
+                    <span className="mr-2 text-sm text-gray-600 dark:text-gray-400">Time range:</span>
+                    <select value={hours} onChange={e => setHours(Number(e.target.value))} className="border rounded px-2 py-1 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
                         <option value={1}>Last 1 Hour</option>
                         <option value={6}>Last 6 Hours</option>
                         <option value={12}>Last 12 Hours</option>
@@ -165,52 +146,40 @@ const IncidentsReport: React.FC = () => {
                 </div>
             </div>
 
-            {loading ? <div className="text-center py-10">Loading incidents...</div> : (
+            {loading ? <div className="text-center py-10 dark:text-gray-300">Loading incidents...</div> : (
                 <div className="overflow-x-auto">
-                    <table className="min-w-full bg-white border">
+                    <table className="min-w-full bg-white dark:bg-gray-800 border dark:border-gray-700">
                         <thead>
-                            <tr>
-                                <th className="py-2 px-4 border-b">Class</th>
-                                <th className="py-2 px-4 border-b">TL Name</th>
-                                <th className="py-2 px-4 border-b">Colour</th>
-                                <th className="py-2 px-4 border-b">Start Time</th>
-                                <th className="py-2 px-4 border-b">Duration</th>
-                                <th className="py-2 px-4 border-b">Description</th>
+                            <tr className="bg-gray-50 dark:bg-gray-700">
+                                <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Class</th>
+                                <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">TL Name</th>
+                                <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Colour</th>
+                                <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Start Time</th>
+                                <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Duration</th>
+                                <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Description</th>
                             </tr>
                         </thead>
                         <tbody>
                             {incidents.length === 0 ? (
-                                <tr>
-                                    <td colSpan={6} className="py-8 text-center text-gray-500">No incidents found in the last {hours} hours.</td>
-                                </tr>
+                                <tr><td colSpan={6} className="py-8 text-center text-gray-500 dark:text-gray-400">No incidents found.</td></tr>
                             ) : (
                                 incidents.map((incident, i) => (
-                                    <tr key={i} className="hover:bg-gray-50">
-                                        <td className="py-2 px-4 border-b">{incident.class}</td>
-                                        <td className="py-2 px-4 border-b font-medium">
-                                            <button onClick={() => window.location.hash = `/details/${incident.class}/${incident.tl}`} className="text-blue-600 hover:underline">
-                                                {incident.tl}
-                                            </button>
+                                    <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                                        <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300">{incident.class}</td>
+                                        <td className="py-2 px-4 border-b dark:border-gray-700 font-medium">
+                                            <button onClick={() => window.location.hash = `#/details/${incident.class}/${incident.tl}`} className="text-blue-600 hover:underline dark:text-blue-400">{incident.tl}</button>
                                         </td>
-                                        <td className="py-2 px-4 border-b">
+                                        <td className="py-2 px-4 border-b dark:border-gray-700">
                                             <span className={clsx("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium", {
-                                                "bg-yellow-100 text-yellow-800": incident.colour === 'yellow',
-                                                "bg-red-100 text-red-800": incident.colour === 'red',
-                                            })}>
-                                                {incident.colour}
-                                            </span>
+                                                "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300": incident.colour === 'yellow',
+                                                "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300": incident.colour === 'red',
+                                            })}>{incident.colour}</span>
                                         </td>
-                                        <td className="py-2 px-4 border-b">{new Date(incident.start_time).toLocaleString()}</td>
-                                        <td className="py-2 px-4 border-b">
-                                            {incident.duration_seconds > 3600
-                                                ? `${(incident.duration_seconds / 3600).toFixed(2)}h`
-                                                : incident.duration_seconds > 60
-                                                    ? `${(incident.duration_seconds / 60).toFixed(1)}m`
-                                                    : `${incident.duration_seconds.toFixed(0)}s`}
+                                        <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300">{new Date(incident.start_time).toLocaleString()}</td>
+                                        <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300">
+                                            {incident.duration_seconds > 3600 ? `${(incident.duration_seconds/3600).toFixed(1)}h` : `${(incident.duration_seconds/60).toFixed(0)}m`}
                                         </td>
-                                        <td className="py-2 px-4 border-b text-sm text-gray-600 truncate max-w-xs" title={incident.description || ""}>
-                                            {incident.description}
-                                        </td>
+                                        <td className="py-2 px-4 border-b dark:border-gray-700 text-sm text-gray-600 dark:text-gray-400 truncate max-w-xs">{incident.description}</td>
                                     </tr>
                                 ))
                             )}
@@ -226,183 +195,299 @@ const Details: React.FC<{ cls: string, tl: string }> = ({ cls, tl }) => {
   const [history, setHistory] = useState<TrafficLightState[]>([]);
   const [metrics, setMetrics] = useState<MetricRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [chartDomain, setChartDomain] = useState<[number | 'dataMin', number | 'dataMax']>(['dataMin', 'dataMax']);
 
   useEffect(() => {
+    setLoading(true);
     Promise.all([
       getHistory(cls, tl),
       getMetrics(cls, tl)
     ]).then(([h, m]) => {
-      setHistory(h);
-      setMetrics(m);
+      const hist = h || [];
+      const mets = m || [];
+      setHistory(hist);
+      setMetrics(mets);
       setLoading(false);
+
+      if (mets.length > 0) {
+          const timestamps = mets.map(d => new Date(d.timestamp).getTime()).filter(t => !isNaN(t));
+          if (timestamps.length > 0) {
+              const maxTime = Math.max(...timestamps);
+              const oneDayAgo = maxTime - (24 * 60 * 60 * 1000);
+              const minTime = Math.min(...timestamps);
+              if (minTime < oneDayAgo) {
+                  setChartDomain([oneDayAgo, maxTime]);
+              }
+          }
+      }
+    }).catch(e => {
+        console.error(e);
+        setLoading(false);
     });
   }, [cls, tl]);
 
-  if (loading) return <div className="p-4">Loading...</div>;
+  const handleZoom = (left: number, right: number) => setChartDomain([left, right]);
 
-  // Calculate durations
-  // History is ordered by timestamp DESC
+  const resetZoom = (range: '24h' | '3d' | 'all') => {
+      if (metrics.length === 0) return;
+      const timestamps = metrics.map(d => new Date(d.timestamp).getTime()).filter(t => !isNaN(t));
+      if (timestamps.length === 0) return;
+      const maxTime = Math.max(...timestamps);
+      if (range === 'all') setChartDomain(['dataMin', 'dataMax']);
+      else if (range === '24h') setChartDomain([maxTime - 86400000, maxTime]);
+      else if (range === '3d') setChartDomain([maxTime - 259200000, maxTime]);
+  };
+
+  const formatDuration = (seconds: number) => {
+      if (seconds <= 0 || isNaN(seconds)) return "00:00:00";
+      const d = Math.floor(seconds / 86400);
+      const h = Math.floor((seconds % 86400) / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = Math.floor(seconds % 60);
+      const ts = `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+      return d > 0 ? `${d}d ${ts}` : ts;
+  };
+
   const historyWithDuration = history.map((item, index) => {
     const nextItem = history[index + 1];
     let duration = "-";
     if (nextItem) {
         const diff = new Date(item.timestamp).getTime() - new Date(nextItem.timestamp).getTime();
-        // duration = `${(diff / 1000).toFixed(1)}s`;
-        // Show in human readable format
-        const seconds = diff / 1000;
-        if (seconds > 3600) duration = `${(seconds / 3600).toFixed(1)}h`;
-        else if (seconds > 60) duration = `${(seconds / 60).toFixed(1)}m`;
-        else duration = `${seconds.toFixed(1)}s`;
+        duration = formatDuration(diff / 1000);
     }
     return { ...item, duration };
   });
 
-  // Calculate aggregated state durations (consecutive same colours)
-  // We need to process in chronological order (ASC) to build logic easily, then reverse for display
-  const sortedHistory = [...history].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  const uniqueMetricKeys = Array.from(new Set(metrics.map(m => m.key)));
+  const metricsByTimestamp = metrics.reduce((acc, m) => {
+    if (!acc[m.timestamp]) acc[m.timestamp] = [];
+    acc[m.timestamp].push(m);
+    return acc;
+  }, {} as Record<string, MetricRecord[]>);
 
-  interface StateDuration {
-    colour: string;
+  const getMetricColour = (m: MetricRecord) => {
+    if (m.metric_type === 'gauge') {
+        if (m.red_at != null && m.value >= m.red_at) return 'red';
+        if (m.yellow_at != null && m.value >= m.yellow_at) return 'yellow';
+        return 'green';
+    }
+    return 'gray';
+  };
+
+  // --- Aggregation Logic (Wide Format) ---
+  interface AggregatedPeriod {
+    overall: string;
+    metrics: Record<string, string>;
     startTime: string;
     endTime: string;
-    durationSeconds: number;
     count: number;
+    durationSeconds: number;
   }
 
-  const stateDurations: StateDuration[] = [];
+  const aggregatedPeriods = useMemo(() => {
+      if (metrics.length === 0) return [];
 
-  if (sortedHistory.length > 0) {
-    let current = sortedHistory[0];
-    let count = 1;
-    let startTime = current.timestamp;
+      const allTimestamps = Array.from(new Set(metrics.map(m => m.timestamp)))
+          .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
 
-    for (let i = 1; i < sortedHistory.length; i++) {
-        const next = sortedHistory[i];
-        if (next.colour === current.colour) {
-            count++;
-        } else {
-            // State changed
-            const endTime = next.timestamp;
-            const duration = (new Date(endTime).getTime() - new Date(startTime).getTime()) / 1000;
-            stateDurations.push({
-                colour: current.colour,
-                startTime,
-                endTime,
-                durationSeconds: duration,
-                count
-            });
-            current = next;
-            count = 1;
-            startTime = next.timestamp;
+      const periods: AggregatedPeriod[] = [];
+      let currentMetricStates: Record<string, string> = {};
+      uniqueMetricKeys.forEach(k => currentMetricStates[k] = 'gray');
+
+      let currentOverall = 'green';
+      let startTime = allTimestamps[0];
+      let count = 0;
+
+      const getOverall = (states: Record<string, string>) => {
+          const colours = Object.values(states);
+          if (colours.includes('red')) return 'red';
+          if (colours.includes('yellow')) return 'yellow';
+          return 'green';
+      };
+
+      const statesEqual = (s1: Record<string, string>, s2: Record<string, string>) => {
+          return uniqueMetricKeys.every(k => s1[k] === s2[k]);
+      };
+
+      for (let i = 0; i < allTimestamps.length; i++) {
+          const ts = allTimestamps[i];
+          const updates = metricsByTimestamp[ts] || [];
+          const nextMetricStates = { ...currentMetricStates };
+          
+          for (const m of updates) {
+              nextMetricStates[m.key] = getMetricColour(m);
+          }
+          
+          const nextOverall = getOverall(nextMetricStates);
+
+          if (i > 0 && (nextOverall !== currentOverall || !statesEqual(nextMetricStates, currentMetricStates))) {
+              const endTime = ts;
+              periods.push({
+                  overall: currentOverall,
+                  metrics: { ...currentMetricStates },
+                  startTime,
+                  endTime,
+                  count,
+                  durationSeconds: (new Date(endTime).getTime() - new Date(startTime).getTime()) / 1000
+              });
+              startTime = ts;
+              count = 0;
+          }
+
+          currentMetricStates = nextMetricStates;
+          currentOverall = nextOverall;
+          count += updates.length;
+      }
+
+      periods.push({
+          overall: currentOverall,
+          metrics: { ...currentMetricStates },
+          startTime,
+          endTime: "Latest",
+          count,
+          durationSeconds: (new Date().getTime() - new Date(startTime).getTime()) / 1000
+      });
+
+      return periods.reverse();
+  }, [metrics, metricsByTimestamp, uniqueMetricKeys]);
+
+  const effectiveDomain = useMemo(() => {
+    let start = 0;
+    let end = Date.now();
+
+    if (metrics.length > 0) {
+        const timestamps = metrics.map(m => new Date(m.timestamp).getTime());
+        start = Math.min(...timestamps);
+        end = Math.max(...timestamps);
+        if (history.length > 0) {
+            const historyTimestamps = history.map(h => new Date(h.timestamp).getTime());
+            start = Math.min(start, ...historyTimestamps);
+            end = Math.max(end, ...historyTimestamps);
         }
+    } else if (history.length > 0) {
+        const historyTimestamps = history.map(h => new Date(h.timestamp).getTime());
+        start = Math.min(...historyTimestamps);
+        end = Math.max(...historyTimestamps);
     }
-    // Push the last state (ongoing)
-    // For ongoing, we can't calculate duration unless we use "now" or just say "until now" or "open".
-    // But typically user wants to know how long it stayed that way.
-    // If it is the last update, the duration is technically 0 if we consider it point-in-time,
-    // or we measure until now. Let's use "Since last update".
-    stateDurations.push({
-        colour: current.colour,
-        startTime,
-        endTime: "Latest",
-        durationSeconds: (new Date().getTime() - new Date(startTime).getTime()) / 1000,
-        count
-    });
-  }
 
-  // Reverse to show latest on top
-  const reversedStateDurations = [...stateDurations].reverse();
+    if (typeof chartDomain[0] === 'number') start = chartDomain[0];
+    if (typeof chartDomain[1] === 'number') end = chartDomain[1];
+    
+    return { start, end };
+  }, [metrics, history, chartDomain]);
 
-  const uniqueMetricKeys = Array.from(new Set(metrics.map(m => m.key)));
+  const filteredPeriods = useMemo(() => {
+      return aggregatedPeriods.filter(p => {
+          const pStart = new Date(p.startTime).getTime();
+          const pEnd = p.endTime === "Latest" ? Date.now() : new Date(p.endTime).getTime();
+          return pStart <= effectiveDomain.end && pEnd >= effectiveDomain.start;
+      });
+  }, [aggregatedPeriods, effectiveDomain]);
+
+  const handleRowClick = (period: AggregatedPeriod) => {
+      const start = new Date(period.startTime).getTime() - 3600000; // -1 hour
+      const end = (period.endTime === "Latest" ? Date.now() : new Date(period.endTime).getTime()) + 3600000; // +1 hour
+      setChartDomain([start, end]);
+  };
+
+  const downloadCsv = () => {
+      const headers = ['Timestamp', 'Colour', 'Description', ...uniqueMetricKeys];
+      const rows = historyWithDuration.map(item => {
+          const rowMetricsMap = (metricsByTimestamp[item.timestamp] || []).reduce((acc, m) => { acc[m.key] = m.value; return acc; }, {} as Record<string, any>);
+          const metricValues = uniqueMetricKeys.map(key => rowMetricsMap[key] ?? '');
+          const esc = (s: any) => { const str = String(s || ''); return (str.includes(',') || str.includes('"') || str.includes('\n')) ? `"${str.replace(/"/g, '""')}"` : str; };
+          return [esc(item.timestamp), esc(item.colour), esc(item.description), ...metricValues].join(',');
+      });
+      const blob = new Blob([[headers.join(','), ...rows].join('\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url; link.download = `${cls}_${tl}_history.csv`;
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+  };
+
+  if (loading) return <div className="p-4 pt-16 dark:text-gray-200">Loading Details...</div>;
 
   return (
     <div className="p-4">
-      <button onClick={() => window.location.hash = '/'} className="mb-4 text-blue-500 hover:underline">&larr; Back</button>
-      <h1 className="text-2xl font-bold mb-4">{cls} / {tl}</h1>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <div>
-          <h2 className="text-xl font-semibold mb-4">State Durations (Aggregated)</h2>
-          <div className="overflow-x-auto mb-8">
-            <table className="min-w-full bg-white border">
-              <thead>
-                <tr>
-                  <th className="py-2 px-4 border-b">State</th>
-                  <th className="py-2 px-4 border-b">Start Time</th>
-                  <th className="py-2 px-4 border-b">End Time</th>
-                  <th className="py-2 px-4 border-b">Updates Count</th>
-                  <th className="py-2 px-4 border-b">Duration</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reversedStateDurations.map((item, i) => (
-                  <tr key={i}>
-                    <td className="py-2 px-4 border-b">
-                      <span className={clsx("inline-block w-4 h-4 rounded-full", {
-                        'bg-green-500': item.colour === 'green',
-                        'bg-yellow-500': item.colour === 'yellow',
-                        'bg-red-500': item.colour === 'red',
-                        'bg-purple-500': item.colour === 'purple',
-                        'bg-gray-500': !['green', 'yellow', 'red', 'purple'].includes(item.colour),
-                      })}></span> {item.colour}
-                    </td>
-                    <td className="py-2 px-4 border-b">{new Date(item.startTime).toLocaleString()}</td>
-                    <td className="py-2 px-4 border-b">{item.endTime === "Latest" ? "Latest" : new Date(item.endTime).toLocaleString()}</td>
-                    <td className="py-2 px-4 border-b">{item.count}</td>
-                    <td className="py-2 px-4 border-b">
-                        {item.durationSeconds > 3600
-                            ? `${(item.durationSeconds / 3600).toFixed(2)}h`
-                            : item.durationSeconds > 60
-                                ? `${(item.durationSeconds / 60).toFixed(1)}m`
-                                : `${item.durationSeconds.toFixed(0)}s`}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <div className="sticky top-0 z-40 bg-gray-100 dark:bg-gray-900 pt-16 pb-4 border-b dark:border-gray-800 mb-6 -mx-4 px-4 shadow-sm">
+          <div className="flex justify-between items-center mb-4">
+              <button onClick={() => window.location.hash = '#/'} className="text-blue-500 hover:underline">&larr; Back</button>
+              <div className="flex gap-2">
+                  {['24h', '3d', 'all'].map(r => (
+                      <button key={r} onClick={() => resetZoom(r as any)} className="px-3 py-1 bg-gray-200 dark:bg-gray-700 text-sm rounded hover:bg-gray-300 dark:hover:bg-gray-600 dark:text-gray-200 capitalize">{r === '3d' ? '3 Days' : r}</button>
+                  ))}
+                  <div className="w-4"></div>
+                  <button onClick={downloadCsv} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-sm font-medium">Download CSV</button>
+              </div>
           </div>
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-2">
+            <h1 className="text-2xl font-bold dark:text-white">{cls} / {tl}</h1>
+            <div className="text-sm text-gray-600 dark:text-gray-400 font-mono bg-white dark:bg-gray-800 px-2 py-1 rounded border dark:border-gray-700">
+                {new Date(effectiveDomain.start).toLocaleString()} - {new Date(effectiveDomain.end).toLocaleString()}
+            </div>
+          </div>
+      </div>
 
-          <h2 className="text-xl font-semibold mb-4">Metrics</h2>
-          {uniqueMetricKeys.length > 0 ? (
-            uniqueMetricKeys.map(key => (
-               <MetricsChart key={key} data={metrics} metricKey={key} />
-            ))
-          ) : (
-            <p>No metrics available.</p>
-          )}
-        </div>
-
+      <div className="grid grid-cols-1 gap-8">
         <div>
-          <h2 className="text-xl font-semibold mb-4">Raw History</h2>
+           <h2 className="text-xl font-semibold mb-4 dark:text-gray-200">Metrics</h2>
+           {uniqueMetricKeys.length > 0 ? uniqueMetricKeys.map(key => (
+                <div key={key} className="mb-6 bg-white dark:bg-gray-800 p-2 rounded shadow-sm border dark:border-gray-700">
+                    <MetricsChart data={metrics} metricKey={key} domain={chartDomain} onZoom={handleZoom} />
+                </div>
+           )) : <p className="dark:text-gray-400">No metrics available.</p>}
+        </div>
+        <div>
+          <h2 className="text-xl font-semibold mb-4 dark:text-gray-200">State Durations (Aggregated)</h2>
           <div className="overflow-x-auto">
-            <table className="min-w-full bg-white border">
+              <table className="min-w-full bg-white dark:bg-gray-800 border dark:border-gray-700">
               <thead>
-                <tr>
-                  <th className="py-2 px-4 border-b">Timestamp</th>
-                  <th className="py-2 px-4 border-b">Colour</th>
-                  <th className="py-2 px-4 border-b">Interval</th>
-                  <th className="py-2 px-4 border-b">Description</th>
-                </tr>
+                  <tr className="bg-gray-50 dark:bg-gray-700">
+                  <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Overall</th>
+                  {uniqueMetricKeys.map(key => (
+                      <th key={key} className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">{key}</th>
+                  ))}
+                  <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Start Time</th>
+                  <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">End Time</th>
+                  <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Updates</th>
+                  <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Duration</th>
+                  </tr>
               </thead>
               <tbody>
-                {historyWithDuration.map((item, i) => (
-                  <tr key={i}>
-                    <td className="py-2 px-4 border-b">{new Date(item.timestamp).toLocaleString()}</td>
-                    <td className="py-2 px-4 border-b">
-                      <span className={clsx("inline-block w-4 h-4 rounded-full", {
-                        'bg-green-500': item.colour === 'green',
-                        'bg-yellow-500': item.colour === 'yellow',
-                        'bg-red-500': item.colour === 'red',
-                        'bg-purple-500': item.colour === 'purple',
-                        'bg-gray-500': !['green', 'yellow', 'red', 'purple'].includes(item.colour),
-                      })}></span> {item.colour}
-                    </td>
-                    <td className="py-2 px-4 border-b">{item.duration}</td>
-                    <td className="py-2 px-4 border-b text-sm">{item.description}</td>
+                  {filteredPeriods.map((period, i) => (
+                  <tr key={i} onClick={() => handleRowClick(period)} className="dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
+                      <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300">
+                          <span className={clsx("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize", {
+                              'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300': period.overall === 'green',
+                              'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300': period.overall === 'yellow',
+                              'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300': period.overall === 'red',
+                          })}>
+                              {period.overall}
+                          </span>
+                      </td>
+                      {uniqueMetricKeys.map(key => (
+                          <td key={key} className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300">
+                             <span className={clsx("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize", {
+                                'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300': period.metrics[key] === 'green',
+                                'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300': period.metrics[key] === 'yellow',
+                                'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300': period.metrics[key] === 'red',
+                                'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300': period.metrics[key] === 'purple',
+                                'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300': !['green', 'yellow', 'red', 'purple'].includes(period.metrics[key]),
+                            })}>
+                                {period.metrics[key]}
+                            </span>
+                          </td>
+                      ))}
+                      <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300 whitespace-nowrap">{new Date(period.startTime).toLocaleString()}</td>
+                      <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300 whitespace-nowrap">{period.endTime === "Latest" ? "Latest" : new Date(period.endTime).toLocaleString()}</td>
+                      <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300">{period.count}</td>
+                      <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300 whitespace-nowrap">
+                          {formatDuration(period.durationSeconds)}
+                      </td>
                   </tr>
-                ))}
+                  ))}
               </tbody>
-            </table>
+              </table>
           </div>
         </div>
       </div>
@@ -412,6 +497,15 @@ const Details: React.FC<{ cls: string, tl: string }> = ({ cls, tl }) => {
 
 const App: React.FC = () => {
   const [route, setRoute] = useState(window.location.hash || '#/');
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    if (localStorage.getItem('theme') === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) return 'dark';
+    return 'light';
+  });
+
+  useEffect(() => {
+    if (theme === 'dark') { document.documentElement.classList.add('dark'); localStorage.setItem('theme', 'dark'); } 
+    else { document.documentElement.classList.remove('dark'); localStorage.setItem('theme', 'light'); }
+  }, [theme]);
 
   useEffect(() => {
     const handleHashChange = () => setRoute(window.location.hash);
@@ -419,26 +513,29 @@ const App: React.FC = () => {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  // Parse route
-  // #/ -> Dashboard
-  // #/details/:class/:tl -> Details
-  // #/incidents -> IncidentsReport
+  const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  const hash = route.startsWith('#') ? route.substring(1) : route;
 
-  const hash = route.substring(1); // remove #
-
+  let content;
   if (hash.startsWith('/details/')) {
     const parts = hash.split('/');
-    // /details/WebServer/my_server_01 -> ["", "details", "WebServer", "my_server_01"]
-    if (parts.length >= 4) {
-      return <Details cls={parts[2]} tl={parts[3]} />;
-    }
+    if (parts.length >= 4) content = <Details cls={parts[2]} tl={parts[3]} />; 
+  } else if (hash === '/incidents') {
+    content = <IncidentsReport />;
+  } else {
+    content = <Dashboard />;
   }
 
-  if (hash === '/incidents') {
-    return <IncidentsReport />;
-  }
-
-  return <Dashboard />;
+  return (
+    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 transition-colors duration-200">
+        <div className="fixed top-4 right-4 z-50">
+            <button onClick={toggleTheme} className="p-2 rounded-full bg-white dark:bg-gray-800 shadow-md border dark:border-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" title="Toggle Theme">
+                {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
+            </button>
+        </div>
+        {content}
+    </div>
+  );
 };
 
 export default App;

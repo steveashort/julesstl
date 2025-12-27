@@ -51,6 +51,8 @@ pub struct MetricRecord {
     pub value_str: Option<String>, // For enums
     pub metric_type: String,
     pub unit: Option<String>,
+    pub yellow_at: Option<f64>,
+    pub red_at: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

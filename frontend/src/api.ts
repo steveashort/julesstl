@@ -21,6 +21,8 @@ export interface MetricRecord {
   value_str?: string;
   metric_type: string;
   unit?: string;
+  yellow_at?: number;
+  red_at?: number;
 }
 
 export interface IncidentRecord {

@@ -73,8 +73,14 @@ while ($currentTime -lt $endTime) {
     # Calculate Memory (Correlated but smoother and higher base)
     $memBase = 40
     $mem = $memBase + ($cycleVal * 0.5) + ($trend * 0.8) + ($rand.NextDouble() * 5)
-     if ($mem -lt 10) { $mem = 10 }
+    if ($mem -lt 10) { $mem = 10 }
     if ($mem -gt 98) { $mem = 98 }
+
+    # Calculate Run Queue (Correlated with CPU but more volatile)
+    # Base it on CPU/2 + random noise
+    $runQueue = ($cpu / 2) + ($rand.Next(-10, 30))
+    if ($runQueue -lt 1) { $runQueue = 1 }
+    if ($runQueue -gt 100) { $runQueue = 100 }
 
     # Prepare payload
     $timestamp = $currentTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -85,7 +91,7 @@ while ($currentTime -lt $endTime) {
         tl = $tlName
         colour = "inferred"
         expires_at = $expiresAt
-        description = "Load: $([math]::Round($cpu, 1))% | Mem: $([math]::Round($mem, 1))%"
+        description = "Load: $([math]::Round($cpu, 1))% | Mem: $([math]::Round($mem, 1))% | RQ: $([math]::Round($runQueue, 0))"
         timestamp = $timestamp
         tags = @("simulation", "production", "high_traffic")
         data = @{
@@ -104,6 +110,14 @@ while ($currentTime -lt $endTime) {
                 unit = "%"
                 "yellow at" = $memYellowAt
                 "red at" = $memRedAt
+            }
+            run_queue = @{
+                key = "run_queue"
+                value = [math]::Round($runQueue, 0)
+                type = "gauge"
+                unit = ""
+                "yellow at" = 40
+                "red at" = 70
             }
         }
     }
