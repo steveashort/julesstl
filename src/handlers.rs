@@ -4,7 +4,6 @@ use axum::{
     response::Json,
 };
 use crate::{db, models::{IngestPayload, TrafficLightState, MetricRecord, IncidentRecord}};
-use std::sync::Arc;
 use serde_json::Value;
 
 pub async fn ingest(

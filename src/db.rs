@@ -1,4 +1,4 @@
-use crate::models::{IngestPayload, MetricData};
+use crate::models::IngestPayload;
 use anyhow::Result;
 use duckdb::{params, Connection};
 // use r2d2::Pool;
@@ -27,7 +27,12 @@ use tokio::task;
 
 #[derive(Clone, Debug)]
 pub struct DuckdbConnectionManager {
-    path: String,
+    // We hold a thread-safe reference to a "master" connection or path
+    // But since r2d2 creates connections on demand, we can't easily clone from a single master inside `connect` without a global or shared state.
+    // However, DuckDB allows multiple connections to the same file *if* they are read-only OR if the main process handles locking correctly?
+    // Actually, DuckDB cannot have two processes writing. But within one process, `Connection::try_clone` is the way.
+    // We can wrap the master connection in an Arc<Mutex> inside the manager.
+    master: Arc<Mutex<Connection>>,
 }
 
 impl r2d2::ManageConnection for DuckdbConnectionManager {
@@ -35,7 +40,9 @@ impl r2d2::ManageConnection for DuckdbConnectionManager {
     type Error = duckdb::Error;
 
     fn connect(&self) -> Result<Connection, duckdb::Error> {
-        Connection::open(&self.path)
+        // Create a new connection by cloning the master
+        let guard = self.master.lock().unwrap();
+        guard.try_clone()
     }
 
     fn is_valid(&self, conn: &mut Connection) -> Result<(), duckdb::Error> {
@@ -51,10 +58,15 @@ impl r2d2::ManageConnection for DuckdbConnectionManager {
 pub type DbPool = Arc<r2d2::Pool<DuckdbConnectionManager>>;
 
 pub fn init_pool() -> Result<DbPool> {
-    let manager = DuckdbConnectionManager { path: "traffic_lights.db".to_string() };
+    let path = "traffic_lights.db";
+    let conn = Connection::open(path)?;
+    let master = Arc::new(Mutex::new(conn));
+
+    let manager = DuckdbConnectionManager { master: master.clone() };
+    // Set max size equal to what we want (e.g., number of threads)
     let pool = r2d2::Pool::builder().max_size(4).build(manager).map_err(|e| anyhow::anyhow!(e))?;
 
-    // Initialize schema
+    // Initialize schema using the master connection directly (or a pooled one)
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
     // tags stored as JSON string because Vec<String> support is tricky without casting or specific feature
     conn.execute_batch(
@@ -107,7 +119,7 @@ pub async fn insert_traffic_light(pool: DbPool, payload: IngestPayload, final_co
 
         if let Some(data) = payload.data {
             let mut appender = conn.appender("metrics")?;
-            for (key, metric) in data {
+            for (_key, metric) in data {
                 let (val_num, val_str) = match &metric.value {
                     serde_json::Value::Number(n) => (n.as_f64(), None),
                     serde_json::Value::String(s) => (None, Some(s.clone())),
@@ -142,51 +154,116 @@ pub async fn get_incidents(pool: DbPool, hours: u32) -> Result<Vec<crate::models
 
     task::spawn_blocking(move || {
         let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+
+        // Fetch raw rows ordered by class, tl, timestamp
+        // We fetch slightly older data to ensure we catch the start of an ongoing incident if needed,
+        // but for now strict cutoff is fine.
         let mut stmt = conn.prepare(
             r#"
-            WITH dur_calc AS (
-                SELECT
-                    class,
-                    tl,
-                    colour,
-                    timestamp,
-                    description,
-                    LEAD(timestamp) OVER (PARTITION BY class, tl ORDER BY timestamp ASC) as next_timestamp
-                FROM traffic_lights
-            )
             SELECT
                 class,
                 tl,
                 colour,
                 timestamp,
-                COALESCE(
-                    date_diff('second', CAST(timestamp AS TIMESTAMP), CAST(next_timestamp AS TIMESTAMP)),
-                    date_diff('second', CAST(timestamp AS TIMESTAMP), CURRENT_TIMESTAMP)
-                ) as duration_seconds,
                 description
-            FROM dur_calc
-            WHERE
-                colour IN ('yellow', 'red')
-                AND timestamp >= ?
-            ORDER BY timestamp DESC
+            FROM traffic_lights
+            WHERE timestamp >= ?
+            ORDER BY class, tl, timestamp ASC
             "#
         )?;
 
-        let incidents_iter = stmt.query_map(params![cutoff_str], |row| {
-             Ok(crate::models::IncidentRecord {
+        struct RawRow {
+            class: String,
+            tl: String,
+            colour: String,
+            timestamp: String,
+            description: Option<String>,
+        }
+
+        let rows_iter = stmt.query_map(params![cutoff_str], |row| {
+             Ok(RawRow {
                 class: row.get(0)?,
                 tl: row.get(1)?,
                 colour: row.get(2)?,
-                start_time: row.get(3)?,
-                duration_seconds: row.get(4)?,
-                description: row.get(5)?,
+                timestamp: row.get(3)?,
+                description: row.get(4)?,
             })
         })?;
 
         let mut incidents = Vec::new();
-        for i in incidents_iter {
-            incidents.push(i?);
+        let mut current_incident: Option<crate::models::IncidentRecord> = None;
+        let now = chrono::Utc::now();
+
+        for r_res in rows_iter {
+            let r = r_res?;
+            let r_time = chrono::DateTime::parse_from_rfc3339(&r.timestamp)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or(now);
+
+            // Check if we continue the current incident
+            if let Some(mut curr) = current_incident.take() {
+                if curr.class == r.class && curr.tl == r.tl && curr.colour == r.colour {
+                    // Extend duration
+                    // Duration is essentially "time since start" + "time until next update (or now)"
+                    // But here we are iterating updates.
+                    // If we have consecutive updates of same colour, they are one incident.
+                    // The duration of the incident keeps growing.
+                    // We calculate duration at the end or update it.
+                    // Let's say duration is (latest_update_time - start_time) + duration_of_last_update?
+                    // Actually, simpler: Duration is (r_time - start_time_dt).
+                    // Wait, we don't know when the current state *ends* until the NEXT state change.
+                    // So we accumulate.
+                    current_incident = Some(curr);
+                } else {
+                    // State changed or different TL. Finalize current if it's yellow/red.
+                    if curr.colour == "yellow" || curr.colour == "red" {
+                        // Calculate duration: from start_time until this new row's time
+                        let start_dt = chrono::DateTime::parse_from_rfc3339(&curr.start_time)
+                            .unwrap()
+                            .with_timezone(&chrono::Utc);
+                        curr.duration_seconds = (r_time - start_dt).num_seconds() as f64;
+                        incidents.push(curr);
+                    }
+
+                    // Start new potential incident
+                    current_incident = Some(crate::models::IncidentRecord {
+                        class: r.class,
+                        tl: r.tl,
+                        colour: r.colour,
+                        start_time: r.timestamp,
+                        duration_seconds: 0.0, // Will be updated
+                        description: r.description,
+                    });
+                }
+            } else {
+                // Start first incident
+                current_incident = Some(crate::models::IncidentRecord {
+                    class: r.class,
+                    tl: r.tl,
+                    colour: r.colour,
+                    start_time: r.timestamp,
+                    duration_seconds: 0.0,
+                    description: r.description,
+                });
+            }
         }
+
+        // Handle the last ongoing incident
+        if let Some(mut curr) = current_incident {
+            if curr.colour == "yellow" || curr.colour == "red" {
+                let start_dt = chrono::DateTime::parse_from_rfc3339(&curr.start_time)
+                    .unwrap()
+                    .with_timezone(&chrono::Utc);
+                // Duration until now
+                curr.duration_seconds = (now - start_dt).num_seconds() as f64;
+                incidents.push(curr);
+            }
+        }
+
+        // Filter final list to only include yellow/red (already done during finalize)
+        // and reverse sort by start_time DESC for display
+        incidents.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+
         Ok(incidents)
     }).await?
 }
