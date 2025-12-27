@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = db::init_pool()?;
 
-    // Ingestion App (Port 3000)
+    // Ingestion App (Port 9000)
     let ingest_app = Router::new()
         .route("/", post(handlers::ingest)) // The prompt says ingest endpoint. Usually / or /ingest.
         // Prompt says "ingest data JSON payloads sent to a localhost:3000 endpoint".
@@ -36,8 +36,8 @@ async fn main() -> anyhow::Result<()> {
         .nest_service("/", ServeDir::new("frontend/dist"))
         .layer(CorsLayer::permissive());
 
-    let addr_ingest = SocketAddr::from(([0, 0, 0, 0], 3000));
-    let addr_ui = SocketAddr::from(([0, 0, 0, 0], 3001));
+    let addr_ingest = SocketAddr::from(([0, 0, 0, 0], 9000));
+    let addr_ui = SocketAddr::from(([0, 0, 0, 0], 9001));
 
     println!("Ingestion listening on {}", addr_ingest);
     println!("UI listening on {}", addr_ui);
