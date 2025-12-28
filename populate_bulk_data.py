@@ -19,6 +19,8 @@ tag_combinations = [
     ["non-prod", "backend"]
 ]
 
+groups = ["cluster-alpha", "cluster-beta", "cluster-gamma", "cluster-delta"]
+
 start_time = datetime.utcnow() - timedelta(days=DAYS)
 total_requests = NUM_SERVERS * (DAYS * 24 // INTERVAL_HOURS)
 print(f"Starting bulk population of {NUM_SERVERS} servers for {DAYS} days (~{total_requests} updates)...")
@@ -30,13 +32,13 @@ start_perf = time.time()
 
 for s in range(NUM_SERVERS):
     server_name = f"server-{s+1:03d}"
+    group_name = groups[s % len(groups)]
     tags = tag_combinations[s % len(tag_combinations)]
     
     current_time = start_time
     cpu_base = random.uniform(20, 60)
     mem_base = random.uniform(30, 70)
     
-    # Re-connect occasionally to avoid issues with long-lived connections
     if s % 50 == 0:
         conn.close()
         conn = http.client.HTTPConnection(HOST, PORT)
@@ -45,16 +47,11 @@ for s in range(NUM_SERVERS):
         cpu_val = max(0, min(100, cpu_base + random.uniform(-15, 15)))
         mem_val = max(0, min(100, mem_base + random.uniform(-10, 10)))
         
-        colour = "green"
-        if cpu_val > 90 or mem_val > 95:
-            colour = "red"
-        elif cpu_val > 75 or mem_val > 85:
-            colour = "yellow"
-            
         payload = {
             "class": "server",
+            "group": group_name,
             "tl": server_name,
-            "colour": colour,
+            "colour": "inferred",
             "expires_at": (current_time + timedelta(hours=INTERVAL_HOURS + 1)).isoformat() + "Z",
             "description": f"Bulk test update for {server_name}",
             "timestamp": current_time.isoformat() + "Z",
@@ -65,16 +62,16 @@ for s in range(NUM_SERVERS):
                     "value": cpu_val,
                     "type": "gauge",
                     "unit": "%",
-                    "yellow at": 75,
-                    "red at": 90
+                    "green if": ["0:75"],
+                    "yellow if": ["75:90"]
                 },
                 "Memory": {
                     "key": "Memory",
                     "value": mem_val,
                     "type": "gauge",
                     "unit": "%",
-                    "yellow at": 85,
-                    "red at": 95
+                    "green if": ["0:85"],
+                    "yellow if": ["85:95"]
                 }
             }
         }
@@ -83,11 +80,10 @@ for s in range(NUM_SERVERS):
             body = json.dumps(payload)
             conn.request("POST", "/", body, {"Content-Type": "application/json"})
             response = conn.getresponse()
-            response.read() # Consume response
+            response.read()
             request_count += 1
         except Exception as e:
             print(f"Failed to send data for {server_name} at {current_time}: {e}")
-            # Try to reconnect
             try:
                 conn.close()
                 conn = http.client.HTTPConnection(HOST, PORT)

@@ -26,8 +26,8 @@ async fn main() -> anyhow::Result<()> {
     // UI/API App (Port 9001)
     let api_routes = Router::new()
         .route("/traffic-lights", get(handlers::list_traffic_lights))
-        .route("/traffic-lights/:class/:tl/history", get(handlers::get_history))
-        .route("/traffic-lights/:class/:tl/metrics", get(handlers::get_metrics))
+        .route("/traffic-lights/:class/:group/:tl/history", get(handlers::get_history))
+        .route("/traffic-lights/:class/:group/:tl/metrics", get(handlers::get_metrics))
         .route("/reports/incidents", get(handlers::get_incidents))
         .with_state(pool.clone());
 

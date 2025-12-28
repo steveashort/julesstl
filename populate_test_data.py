@@ -28,6 +28,7 @@ for colour, count in sequence:
     for i in range(count):
         payload = {
             "class": CLASS_NAME,
+            "group": "test-group",
             "tl": TL_NAME,
             "colour": colour,
             "expires_at": (current_time + timedelta(hours=1)).isoformat() + "Z",

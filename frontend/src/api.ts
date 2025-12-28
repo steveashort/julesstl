@@ -4,6 +4,7 @@ const API_BASE = '/api';
 
 export interface TrafficLightState {
   class: string;
+  group: string;
   tl: string;
   colour: string;
   timestamp: string;
@@ -14,6 +15,7 @@ export interface TrafficLightState {
 
 export interface MetricRecord {
   class: string;
+  group: string;
   tl: string;
   timestamp: string;
   key: string;
@@ -21,12 +23,13 @@ export interface MetricRecord {
   value_str?: string;
   metric_type: string;
   unit?: string;
-  yellow_at?: number;
-  red_at?: number;
+  green_if?: string[];
+  yellow_if?: string[];
 }
 
 export interface IncidentRecord {
   class: string;
+  group: string; // IncidentRecord needs group too? Yes, DB returns it.
   tl: string;
   colour: string;
   start_time: string;
@@ -39,13 +42,13 @@ export const getTrafficLights = async () => {
   return response.data;
 };
 
-export const getHistory = async (cls: string, tl: string) => {
-  const response = await axios.get<TrafficLightState[]>(`${API_BASE}/traffic-lights/${cls}/${tl}/history`);
+export const getHistory = async (cls: string, grp: string, tl: string) => {
+  const response = await axios.get<TrafficLightState[]>(`${API_BASE}/traffic-lights/${cls}/${grp}/${tl}/history`);
   return response.data;
 };
 
-export const getMetrics = async (cls: string, tl: string) => {
-  const response = await axios.get<MetricRecord[]>(`${API_BASE}/traffic-lights/${cls}/${tl}/metrics`);
+export const getMetrics = async (cls: string, grp: string, tl: string) => {
+  const response = await axios.get<MetricRecord[]>(`${API_BASE}/traffic-lights/${cls}/${grp}/${tl}/metrics`);
   return response.data;
 };
 

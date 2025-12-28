@@ -29,7 +29,6 @@ const MetricsChart: React.FC<Props> = ({ data, metricKey, domain, onZoom }) => {
       return;
     }
 
-    // Ensure left is smaller than right
     let newLeft = refAreaLeft;
     let newRight = refAreaRight;
     if (newLeft > newRight) [newLeft, newRight] = [newRight, newLeft];
@@ -37,28 +36,63 @@ const MetricsChart: React.FC<Props> = ({ data, metricKey, domain, onZoom }) => {
     setRefAreaLeft(null);
     setRefAreaRight(null);
     
-    // Notify parent
     onZoom(newLeft, newRight);
   };
 
-  // Determine thresholds
-  const lastRecordWithConfig = [...filteredData].reverse().find(d => d.yellow_at != null || d.red_at != null);
-  const yellowAt = lastRecordWithConfig?.yellow_at;
-  const redAt = lastRecordWithConfig?.red_at;
+  // Determine thresholds/zones
+  const lastRecord = [...filteredData].reverse().find(d => (d.green_if && d.green_if.length > 0) || (d.yellow_if && d.yellow_if.length > 0));
+  const greenRules = lastRecord?.green_if || [];
+  const yellowRules = lastRecord?.yellow_if || [];
 
-  // Check time span (based on current domain view or full data if auto)
+  const parseRanges = (rules: string[]) => {
+      return rules.filter(r => r.includes(':')).map(r => {
+          const [min, max] = r.split(':').map(Number);
+          return { min, max };
+      }).filter(r => !isNaN(r.min) && !isNaN(r.max));
+  };
+
+  const greenZones = parseRanges(greenRules);
+  const yellowZones = parseRanges(yellowRules);
+
+  let overallMin = Number.MAX_VALUE;
+  let overallMax = Number.MIN_VALUE;
+  [...greenZones, ...yellowZones].forEach(z => {
+      if (z.min < overallMin) overallMin = z.min;
+      if (z.max > overallMax) overallMax = z.max;
+  });
+
+  const redZones = [];
+  if (overallMin !== Number.MAX_VALUE) {
+      // Bottom Red Zone: 10% below min (or 0 if negative logic applies, but assume generic)
+      // If min is 0, then -0.1? Gauge usually >= 0? Assuming positive.
+      // If min is 0, we can't show 10% below 0 easily if domain is clamped.
+      // But let's follow instruction: 10% less than min.
+      // If min is 0, 10% of 0 is 0.
+      // If ranges are 0:65. Min is 0. 
+      // If user wants to see "Red" outside, and 0 is bound, then maybe only Top Red Zone matters for 0-start.
+      // But mathematically:
+      redZones.push({ min: overallMin - (overallMin * 0.1), max: overallMin });
+      // Top Red Zone: 10% above max
+      redZones.push({ min: overallMax, max: overallMax + (overallMax * 0.1) });
+  }
+
+  // Check time span
   const currentMin = typeof domain[0] === 'number' ? domain[0] : Math.min(...filteredData.map(d => d.timeNum));
   const currentMax = typeof domain[1] === 'number' ? domain[1] : Math.max(...filteredData.map(d => d.timeNum));
   const isMultiDay = (currentMax - currentMin) > 86400000;
 
-  // Calculate yMax based on visible data
+  // Calculate yMax
   const visibleData = filteredData.filter(d => d.timeNum >= currentMin && d.timeNum <= currentMax);
   const visibleMax = visibleData.length > 0 ? Math.max(...visibleData.map(d => d.value)) : 0;
 
   let yMax = visibleMax;
-  if (yellowAt != null) yMax = Math.max(yMax, yellowAt);
-  if (redAt != null) yMax = Math.max(yMax, redAt);
-  yMax = yMax * 1.1;
+  // Ensure we see the Red Zones (at least the top one)
+  if (redZones.length > 0) {
+      yMax = Math.max(yMax, redZones[1].max);
+  } else {
+      yMax = yMax * 1.1;
+  }
+  
   if (yMax === 0) yMax = 10;
 
   const yTicks = Array.from({ length: 6 }, (_, i) => parseFloat((yMax * (i / 5)).toFixed(2)));
@@ -106,31 +140,18 @@ const MetricsChart: React.FC<Props> = ({ data, metricKey, domain, onZoom }) => {
           />
           <Legend />
           
-          {/* Background Zones */}
-          {(yellowAt != null || redAt != null) && (
-             <ReferenceArea 
-                y1={0} 
-                y2={yellowAt ?? redAt} 
-                fill="rgba(34, 197, 94, 0.4)" 
-                stroke="none"
-             />
-          )}
-          {yellowAt != null && redAt != null && (
-             <ReferenceArea 
-                y1={yellowAt} 
-                y2={redAt} 
-                fill="rgba(234, 179, 8, 0.4)" 
-                stroke="none"
-             />
-          )}
-          {redAt != null && (
-             <ReferenceArea 
-                y1={redAt} 
-                y2={yMax} 
-                fill="rgba(239, 68, 68, 0.4)" 
-                stroke="none"
-             />
-          )}
+          {/* Green Zones */}
+          {greenZones.map((z, i) => (
+             <ReferenceArea key={`g-${i}`} y1={z.min} y2={z.max} fill="rgba(34, 197, 94, 0.2)" stroke="none" />
+          ))}
+          {/* Yellow Zones */}
+          {yellowZones.map((z, i) => (
+             <ReferenceArea key={`y-${i}`} y1={z.min} y2={z.max} fill="rgba(234, 179, 8, 0.3)" stroke="none" />
+          ))}
+          {/* Red Zones */}
+          {redZones.map((z, i) => (
+             <ReferenceArea key={`r-${i}`} y1={z.min} y2={z.max} fill="rgba(239, 68, 68, 0.2)" stroke="none" />
+          ))}
 
           {/* Selection Box */}
           {refAreaLeft && refAreaRight ? (

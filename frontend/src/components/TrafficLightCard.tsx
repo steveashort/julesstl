@@ -21,7 +21,7 @@ const TrafficLightCard: React.FC<Props> = ({ tl }) => {
         <div className="flex justify-between items-start mb-2">
           <div className="flex flex-col overflow-hidden mr-2">
              <h3 className="font-bold text-base dark:text-gray-200 truncate" title={tl.tl}>{tl.tl}</h3>
-             <span className="text-xs text-gray-500 dark:text-gray-400 truncate">{tl.class}</span>
+             <span className="text-xs text-gray-500 dark:text-gray-400 truncate">{tl.class} / {tl.group}</span>
           </div>
           <span className={pillClass}>
               {tl.colour}

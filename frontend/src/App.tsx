@@ -11,6 +11,7 @@ const Dashboard: React.FC = () => {
 
   // Filters state
   const [selectedClass, setSelectedClass] = useState<string>('');
+  const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [selectedColour, setSelectedColour] = useState<string>('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
@@ -29,6 +30,7 @@ const Dashboard: React.FC = () => {
   }, []);
 
   const classes = useMemo(() => Array.from(new Set(tls.map(tl => tl.class))).sort(), [tls]);
+  const groups = useMemo(() => Array.from(new Set(tls.map(tl => tl.group))).sort(), [tls]);
   const colours = useMemo(() => Array.from(new Set(tls.map(tl => tl.colour))).sort(), [tls]);
   const tags = useMemo(() => {
     const allTags = tls.flatMap(tl => tl.tags || []);
@@ -38,18 +40,20 @@ const Dashboard: React.FC = () => {
   const filteredTls = useMemo(() => {
     return tls.filter(tl => {
       if (selectedClass && tl.class !== selectedClass) return false;
+      if (selectedGroup && tl.group !== selectedGroup) return false;
       if (selectedColour && tl.colour !== selectedColour) return false;
       if (selectedTags.length > 0 && !selectedTags.every(t => (tl.tags || []).includes(t))) return false;
       return true;
     });
-  }, [tls, selectedClass, selectedColour, selectedTags]);
+  }, [tls, selectedClass, selectedGroup, selectedColour, selectedTags]);
 
   const grouped = useMemo(() => {
     return filteredTls.reduce((acc, tl) => {
-      if (!acc[tl.class]) acc[tl.class] = [];
-      acc[tl.class].push(tl);
+      if (!acc[tl.class]) acc[tl.class] = {};
+      if (!acc[tl.class][tl.group]) acc[tl.class][tl.group] = [];
+      acc[tl.class][tl.group].push(tl);
       return acc;
-    }, {} as Record<string, TrafficLightState[]>);
+    }, {} as Record<string, Record<string, TrafficLightState[]>>);
   }, [filteredTls]);
 
   const toggleTag = (tag: string) => {
@@ -81,12 +85,16 @@ const Dashboard: React.FC = () => {
                 <option value="">All Classes</option>
                 {classes.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
+              <select value={selectedGroup} onChange={e => setSelectedGroup(e.target.value)} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
+                <option value="">All Groups</option>
+                {groups.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
               <select value={selectedColour} onChange={e => setSelectedColour(e.target.value)} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
                 <option value="">All Colours</option>
                 {colours.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
-              {(selectedClass || selectedColour || selectedTags.length > 0) && (
-                <button onClick={() => { setSelectedClass(''); setSelectedColour(''); setSelectedTags([]); }} className="text-red-500 text-sm hover:underline ml-2">Clear All</button>
+              {(selectedClass || selectedGroup || selectedColour || selectedTags.length > 0) && (
+                <button onClick={() => { setSelectedClass(''); setSelectedGroup(''); setSelectedColour(''); setSelectedTags([]); }} className="text-red-500 text-sm hover:underline ml-2">Clear All</button>
               )}
            </div>
            
@@ -115,16 +123,23 @@ const Dashboard: React.FC = () => {
       {Object.entries(grouped).length === 0 ? (
         <div className="text-center text-gray-500 py-10 dark:text-gray-400">No traffic lights found.</div>
       ) : (
-        Object.entries(grouped).map(([cls, items]) => (
+        Object.entries(grouped).map(([cls, classGroups]) => (
           <div key={cls} className="mb-8">
             <h2 className="text-xl font-semibold mb-2 dark:text-gray-200">{cls}</h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-              {items.map(tl => (
-                <div key={tl.tl} className="cursor-pointer" onClick={() => window.location.hash = `#/details/${tl.class}/${tl.tl}`}>
-                  <TrafficLightCard tl={tl} />
+            {Object.entries(classGroups).map(([grp, items]) => (
+                <div key={grp} className="mb-6 pl-4 border-l-2 border-gray-200 dark:border-gray-700">
+                    <h3 className="text-lg font-medium mb-3 dark:text-gray-300 flex items-center">
+                        <span className="bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded text-sm">{grp}</span>
+                    </h3>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                    {items.map(tl => (
+                        <div key={tl.tl} className="cursor-pointer" onClick={() => window.location.hash = `#/details/${tl.class}/${tl.group}/${tl.tl}`}>
+                        <TrafficLightCard tl={tl} />
+                        </div>
+                    ))}
+                    </div>
                 </div>
-              ))}
-            </div>
+            ))}
           </div>
         ))
       )}
@@ -172,6 +187,7 @@ const IncidentsReport: React.FC = () => {
                         <thead>
                             <tr className="bg-gray-50 dark:bg-gray-700">
                                 <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Class</th>
+                                <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Group</th>
                                 <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">TL Name</th>
                                 <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Colour</th>
                                 <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Start Time</th>
@@ -181,13 +197,14 @@ const IncidentsReport: React.FC = () => {
                         </thead>
                         <tbody>
                             {incidents.length === 0 ? (
-                                <tr><td colSpan={6} className="py-8 text-center text-gray-500 dark:text-gray-400">No incidents found.</td></tr>
+                                <tr><td colSpan={7} className="py-8 text-center text-gray-500 dark:text-gray-400">No incidents found.</td></tr>
                             ) : (
                                 incidents.map((incident, i) => (
                                     <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                                         <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300">{incident.class}</td>
+                                        <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300">{incident.group}</td>
                                         <td className="py-2 px-4 border-b dark:border-gray-700 font-medium">
-                                            <button onClick={() => window.location.hash = `#/details/${incident.class}/${incident.tl}`} className="text-blue-600 hover:underline dark:text-blue-400">{incident.tl}</button>
+                                            <button onClick={() => window.location.hash = `#/details/${incident.class}/${incident.group}/${incident.tl}`} className="text-blue-600 hover:underline dark:text-blue-400">{incident.tl}</button>
                                         </td>
                                         <td className="py-2 px-4 border-b dark:border-gray-700">
                                             <span className={clsx("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium", {
@@ -211,7 +228,7 @@ const IncidentsReport: React.FC = () => {
     );
 };
 
-const Details: React.FC<{ cls: string, tl: string }> = ({ cls, tl }) => {
+const Details: React.FC<{ cls: string, grp: string, tl: string }> = ({ cls, grp, tl }) => {
   const [history, setHistory] = useState<TrafficLightState[]>([]);
   const [metrics, setMetrics] = useState<MetricRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -225,8 +242,8 @@ const Details: React.FC<{ cls: string, tl: string }> = ({ cls, tl }) => {
   useEffect(() => {
     setLoading(true);
     Promise.all([
-      getHistory(cls, tl),
-      getMetrics(cls, tl)
+      getHistory(cls, grp, tl),
+      getMetrics(cls, grp, tl)
     ]).then(([h, m]) => {
       const hist = h || [];
       const mets = m || [];
@@ -249,7 +266,7 @@ const Details: React.FC<{ cls: string, tl: string }> = ({ cls, tl }) => {
         console.error(e);
         setLoading(false);
     });
-  }, [cls, tl]);
+  }, [cls, grp, tl]);
 
   const handleZoom = (left: number, right: number) => setChartDomain([left, right]);
 
@@ -291,12 +308,23 @@ const Details: React.FC<{ cls: string, tl: string }> = ({ cls, tl }) => {
   }, {} as Record<string, MetricRecord[]>);
 
   const getMetricColour = (m: MetricRecord) => {
-    if (m.metric_type === 'gauge') {
-        if (m.red_at != null && m.value >= m.red_at) return 'red';
-        if (m.yellow_at != null && m.value >= m.yellow_at) return 'yellow';
-        return 'green';
-    }
-    return 'gray';
+    const checkMatch = (rules?: string[]) => {
+        if (!rules) return false;
+        for (const rule of rules) {
+            if (rule.includes(':')) {
+                const [min, max] = rule.split(':').map(Number);
+                if (!isNaN(min) && !isNaN(max) && m.value >= min && m.value < max) return true;
+            } else {
+                if (m.value_str === rule) return true;
+                if (Math.abs(m.value - Number(rule)) < Number.EPSILON) return true;
+            }
+        }
+        return false;
+    };
+
+    if (checkMatch(m.yellow_if)) return 'yellow';
+    if (checkMatch(m.green_if)) return 'green';
+    return 'red';
   };
 
   // --- Aggregation Logic (Wide Format) ---
@@ -449,7 +477,7 @@ const Details: React.FC<{ cls: string, tl: string }> = ({ cls, tl }) => {
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
                 <div>
                    <h1 className="text-2xl font-bold dark:text-white flex items-center gap-2">
-                       {cls} / {tl}
+                       {cls} / {grp} / {tl}
                        {latestTL && (
                            <span className={clsx("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize", {
                                 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300': latestTL.colour === 'green',
@@ -570,7 +598,7 @@ const App: React.FC = () => {
   let content;
   if (hash.startsWith('/details/')) {
     const parts = hash.split('/');
-    if (parts.length >= 4) content = <Details cls={parts[2]} tl={parts[3]} />; 
+    if (parts.length >= 5) content = <Details cls={parts[2]} grp={parts[3]} tl={parts[4]} />; 
   } else if (hash === '/incidents') {
     content = <IncidentsReport />;
   } else {

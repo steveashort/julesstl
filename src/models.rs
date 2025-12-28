@@ -4,6 +4,7 @@ use std::collections::HashMap;
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct IngestPayload {
     pub class: String,
+    pub group: String,
     pub tl: String,
     pub colour: String, // "green", "yellow", "red", "inferred"
     pub expires_at: Option<String>, // Or DateTime<Utc>
@@ -24,15 +25,12 @@ pub struct MetricData {
     pub green_if: Option<Vec<String>>,
     #[serde(rename = "yellow if")]
     pub yellow_if: Option<Vec<String>>,
-    #[serde(rename = "yellow at")]
-    pub yellow_at: Option<f64>,
-    #[serde(rename = "red at")]
-    pub red_at: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TrafficLightState {
     pub class: String,
+    pub group: String,
     pub tl: String,
     pub colour: String,
     pub timestamp: String,
@@ -44,6 +42,7 @@ pub struct TrafficLightState {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MetricRecord {
     pub class: String,
+    pub group: String,
     pub tl: String,
     pub timestamp: String,
     pub key: String,
@@ -51,13 +50,14 @@ pub struct MetricRecord {
     pub value_str: Option<String>, // For enums
     pub metric_type: String,
     pub unit: Option<String>,
-    pub yellow_at: Option<f64>,
-    pub red_at: Option<f64>,
+    pub green_if: Option<Vec<String>>,
+    pub yellow_if: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct IncidentRecord {
     pub class: String,
+    pub group: String,
     pub tl: String,
     pub colour: String,
     pub start_time: String,

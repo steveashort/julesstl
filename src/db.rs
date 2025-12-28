@@ -1,37 +1,11 @@
 use crate::models::IngestPayload;
 use anyhow::Result;
 use duckdb::{params, Connection};
-// use r2d2::Pool;
-// use r2d2_duckdb::DuckdbConnectionManager;
 use std::sync::{Arc, Mutex};
 use tokio::task;
 
-// Simplistic connection pooling using Mutex<Connection> if r2d2 fails
-// Or just use a single connection wrapped in Mutex for now to pass compilation
-// The issue with r2d2-duckdb is conflicting versions.
-// Since I want efficiency, opening a new connection per request is bad (DuckDB startup).
-// DuckDB handles concurrency internally if we clone the connection? No, Connection is not thread safe directly.
-// But we can clone `Connection`? No.
-// We can use `Connection::open_with_flags`?
-// The best way without r2d2 is `Arc<Mutex<Connection>>` but that serializes all DB ops.
-// However, `duckdb` allows cloning a connection? No.
-
-// Let's implement a simple pool or just use `Arc<Mutex<Connection>>` for now to unblock.
-// Actually, `duckdb` documentation says `Connection` is not Sync.
-// So we need `Arc<Mutex<Connection>>`.
-// But DuckDB is fast.
-// Let's try to implement `r2d2::ManageConnection` for `duckdb::Connection` manually if needed, or just use `Arc<Mutex<Connection>>`.
-// Given the "efficiency" requirement, serializing might be a bottleneck.
-// But `duckdb` is an embedded DB.
-// Another option: Use `r2d2` with a custom manager.
-
 #[derive(Clone, Debug)]
 pub struct DuckdbConnectionManager {
-    // We hold a thread-safe reference to a "master" connection or path
-    // But since r2d2 creates connections on demand, we can't easily clone from a single master inside `connect` without a global or shared state.
-    // However, DuckDB allows multiple connections to the same file *if* they are read-only OR if the main process handles locking correctly?
-    // Actually, DuckDB cannot have two processes writing. But within one process, `Connection::try_clone` is the way.
-    // We can wrap the master connection in an Arc<Mutex> inside the manager.
     master: Arc<Mutex<Connection>>,
 }
 
@@ -40,7 +14,6 @@ impl r2d2::ManageConnection for DuckdbConnectionManager {
     type Error = duckdb::Error;
 
     fn connect(&self) -> Result<Connection, duckdb::Error> {
-        // Create a new connection by cloning the master
         let guard = self.master.lock().unwrap();
         guard.try_clone()
     }
@@ -63,27 +36,31 @@ pub fn init_pool() -> Result<DbPool> {
     let master = Arc::new(Mutex::new(conn));
 
     let manager = DuckdbConnectionManager { master: master.clone() };
-    // Set max size equal to what we want (e.g., number of threads)
     let pool = r2d2::Pool::builder().max_size(4).build(manager).map_err(|e| anyhow::anyhow!(e))?;
 
-    // Initialize schema using the master connection directly (or a pooled one)
     let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-    // tags stored as JSON string because Vec<String> support is tricky without casting or specific feature
+    
+    // Schema update: Drop existing to enforce new schema with group_name and updated metrics columns
     conn.execute_batch(
         r#"
-        CREATE TABLE IF NOT EXISTS traffic_lights (
+        DROP TABLE IF EXISTS traffic_lights;
+        DROP TABLE IF EXISTS metrics;
+
+        CREATE TABLE traffic_lights (
             class VARCHAR,
+            group_name VARCHAR,
             tl VARCHAR,
             colour VARCHAR,
             timestamp VARCHAR,
             expires_at VARCHAR,
             description VARCHAR,
             tags VARCHAR,
-            PRIMARY KEY (class, tl, timestamp)
+            PRIMARY KEY (class, group_name, tl, timestamp)
         );
 
-        CREATE TABLE IF NOT EXISTS metrics (
+        CREATE TABLE metrics (
             class VARCHAR,
+            group_name VARCHAR,
             tl VARCHAR,
             timestamp VARCHAR,
             key VARCHAR,
@@ -91,20 +68,11 @@ pub fn init_pool() -> Result<DbPool> {
             value_str VARCHAR,
             metric_type VARCHAR,
             unit VARCHAR,
-            yellow_at DOUBLE,
-            red_at DOUBLE
+            green_if VARCHAR,
+            yellow_if VARCHAR
         );
         "#,
     )?;
-    
-    // Migration: Add columns if they don't exist (simulated by trying to add and ignoring error, 
-    // or better: check if column exists. For DuckDB, simple ALTER IF NOT EXISTS isn't standard SQL everywhere
-    // but DuckDB supports it? No.
-    // We'll just try to ALTER and ignore failure for now as a quick hack for this prototype
-    // since we can't easily query schema catalog in a portable way without more code.
-    // Actually, let's just use `catch_unwind` equivalent or Result ignore.
-    let _ = conn.execute("ALTER TABLE metrics ADD COLUMN yellow_at DOUBLE", []);
-    let _ = conn.execute("ALTER TABLE metrics ADD COLUMN red_at DOUBLE", []);
 
     Ok(Arc::new(pool))
 }
@@ -116,9 +84,10 @@ pub async fn insert_traffic_light(pool: DbPool, payload: IngestPayload, final_co
         let tags_json = serde_json::to_string(&payload.tags.unwrap_or_default())?;
 
         conn.execute(
-            "INSERT INTO traffic_lights (class, tl, colour, timestamp, expires_at, description, tags) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO traffic_lights (class, group_name, tl, colour, timestamp, expires_at, description, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 payload.class,
+                payload.group,
                 payload.tl,
                 final_colour,
                 payload.timestamp,
@@ -136,9 +105,13 @@ pub async fn insert_traffic_light(pool: DbPool, payload: IngestPayload, final_co
                     serde_json::Value::String(s) => (None, Some(s.clone())),
                     _ => (None, None),
                 };
+                
+                let green_if_json = metric.green_if.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
+                let yellow_if_json = metric.yellow_if.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
 
                 appender.append_row(params![
                     payload.class,
+                    payload.group,
                     payload.tl,
                     payload.timestamp,
                     metric.key,
@@ -146,8 +119,8 @@ pub async fn insert_traffic_light(pool: DbPool, payload: IngestPayload, final_co
                     val_str,
                     metric.metric_type,
                     metric.unit,
-                    metric.yellow_at,
-                    metric.red_at
+                    green_if_json,
+                    yellow_if_json
                 ])?;
             }
         }
@@ -160,33 +133,30 @@ pub async fn insert_traffic_light(pool: DbPool, payload: IngestPayload, final_co
 
 pub async fn get_incidents(pool: DbPool, hours: u32) -> Result<Vec<crate::models::IncidentRecord>> {
     let pool = pool.clone();
-
-    // Recalculating cutoff in Rust to avoid SQL interval parameter issues
     let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
     let cutoff_str = cutoff.to_rfc3339();
 
     task::spawn_blocking(move || {
         let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
 
-        // Fetch raw rows ordered by class, tl, timestamp
-        // We fetch slightly older data to ensure we catch the start of an ongoing incident if needed,
-        // but for now strict cutoff is fine.
         let mut stmt = conn.prepare(
             r#"
             SELECT
                 class,
+                group_name,
                 tl,
                 colour,
                 timestamp,
                 description
             FROM traffic_lights
             WHERE timestamp >= ?
-            ORDER BY class, tl, timestamp ASC
+            ORDER BY class, group_name, tl, timestamp ASC
             "#
         )?;
 
         struct RawRow {
             class: String,
+            group: String,
             tl: String,
             colour: String,
             timestamp: String,
@@ -196,10 +166,11 @@ pub async fn get_incidents(pool: DbPool, hours: u32) -> Result<Vec<crate::models
         let rows_iter = stmt.query_map(params![cutoff_str], |row| {
              Ok(RawRow {
                 class: row.get(0)?,
-                tl: row.get(1)?,
-                colour: row.get(2)?,
-                timestamp: row.get(3)?,
-                description: row.get(4)?,
+                group: row.get(1)?,
+                tl: row.get(2)?,
+                colour: row.get(3)?,
+                timestamp: row.get(4)?,
+                description: row.get(5)?,
             })
         })?;
 
@@ -213,24 +184,11 @@ pub async fn get_incidents(pool: DbPool, hours: u32) -> Result<Vec<crate::models
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or(now);
 
-            // Check if we continue the current incident
             if let Some(mut curr) = current_incident.take() {
-                if curr.class == r.class && curr.tl == r.tl && curr.colour == r.colour {
-                    // Extend duration
-                    // Duration is essentially "time since start" + "time until next update (or now)"
-                    // But here we are iterating updates.
-                    // If we have consecutive updates of same colour, they are one incident.
-                    // The duration of the incident keeps growing.
-                    // We calculate duration at the end or update it.
-                    // Let's say duration is (latest_update_time - start_time) + duration_of_last_update?
-                    // Actually, simpler: Duration is (r_time - start_time_dt).
-                    // Wait, we don't know when the current state *ends* until the NEXT state change.
-                    // So we accumulate.
+                if curr.class == r.class && curr.group == r.group && curr.tl == r.tl && curr.colour == r.colour {
                     current_incident = Some(curr);
                 } else {
-                    // State changed or different TL. Finalize current if it's yellow/red.
                     if curr.colour == "yellow" || curr.colour == "red" {
-                        // Calculate duration: from start_time until this new row's time
                         let start_dt = chrono::DateTime::parse_from_rfc3339(&curr.start_time)
                             .unwrap()
                             .with_timezone(&chrono::Utc);
@@ -238,20 +196,20 @@ pub async fn get_incidents(pool: DbPool, hours: u32) -> Result<Vec<crate::models
                         incidents.push(curr);
                     }
 
-                    // Start new potential incident
                     current_incident = Some(crate::models::IncidentRecord {
                         class: r.class,
+                        group: r.group,
                         tl: r.tl,
                         colour: r.colour,
                         start_time: r.timestamp,
-                        duration_seconds: 0.0, // Will be updated
+                        duration_seconds: 0.0,
                         description: r.description,
                     });
                 }
             } else {
-                // Start first incident
                 current_incident = Some(crate::models::IncidentRecord {
                     class: r.class,
+                    group: r.group,
                     tl: r.tl,
                     colour: r.colour,
                     start_time: r.timestamp,
@@ -261,22 +219,17 @@ pub async fn get_incidents(pool: DbPool, hours: u32) -> Result<Vec<crate::models
             }
         }
 
-        // Handle the last ongoing incident
         if let Some(mut curr) = current_incident {
             if curr.colour == "yellow" || curr.colour == "red" {
                 let start_dt = chrono::DateTime::parse_from_rfc3339(&curr.start_time)
                     .unwrap()
                     .with_timezone(&chrono::Utc);
-                // Duration until now
                 curr.duration_seconds = (now - start_dt).num_seconds() as f64;
                 incidents.push(curr);
             }
         }
 
-        // Filter final list to only include yellow/red (already done during finalize)
-        // and reverse sort by start_time DESC for display
         incidents.sort_by(|a, b| b.start_time.cmp(&a.start_time));
-
         Ok(incidents)
     }).await?
 }
@@ -285,30 +238,30 @@ pub async fn get_current_states(pool: DbPool) -> Result<Vec<crate::models::Traff
     let pool = pool.clone();
     task::spawn_blocking(move || {
         let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-        // Get the latest timestamp for each class/tl
         let mut stmt = conn.prepare(
             r#"
             WITH ranked_tls AS (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY class, tl ORDER BY timestamp DESC) as rn
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY class, group_name, tl ORDER BY timestamp DESC) as rn
                 FROM traffic_lights
             )
-            SELECT class, tl, colour, timestamp, expires_at, description, tags
+            SELECT class, group_name, tl, colour, timestamp, expires_at, description, tags
             FROM ranked_tls
             WHERE rn = 1
-            ORDER BY class, tl
+            ORDER BY class, group_name, tl
             "#
         )?;
 
         let tls_iter = stmt.query_map([], |row| {
-             let tags_str: String = row.get(6)?;
+             let tags_str: String = row.get(7)?;
              let tags_vec: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
              Ok(crate::models::TrafficLightState {
                 class: row.get(0)?,
-                tl: row.get(1)?,
-                colour: row.get(2)?,
-                timestamp: row.get(3)?,
-                expires_at: row.get(4)?,
-                description: row.get(5)?,
+                group: row.get(1)?,
+                tl: row.get(2)?,
+                colour: row.get(3)?,
+                timestamp: row.get(4)?,
+                expires_at: row.get(5)?,
+                description: row.get(6)?,
                 tags: tags_vec,
             })
         })?;
@@ -321,24 +274,25 @@ pub async fn get_current_states(pool: DbPool) -> Result<Vec<crate::models::Traff
     }).await?
 }
 
-pub async fn get_history(pool: DbPool, class: String, tl: String) -> Result<Vec<crate::models::TrafficLightState>> {
+pub async fn get_history(pool: DbPool, class: String, group: String, tl: String) -> Result<Vec<crate::models::TrafficLightState>> {
     let pool = pool.clone();
     task::spawn_blocking(move || {
         let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
         let mut stmt = conn.prepare(
-            "SELECT class, tl, colour, timestamp, expires_at, description, tags FROM traffic_lights WHERE class = ? AND tl = ? ORDER BY timestamp DESC"
+            "SELECT class, group_name, tl, colour, timestamp, expires_at, description, tags FROM traffic_lights WHERE class = ? AND group_name = ? AND tl = ? ORDER BY timestamp DESC"
         )?;
 
-        let tls_iter = stmt.query_map(params![class, tl], |row| {
-             let tags_str: String = row.get(6)?;
+        let tls_iter = stmt.query_map(params![class, group, tl], |row| {
+             let tags_str: String = row.get(7)?;
              let tags_vec: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
              Ok(crate::models::TrafficLightState {
                 class: row.get(0)?,
-                tl: row.get(1)?,
-                colour: row.get(2)?,
-                timestamp: row.get(3)?,
-                expires_at: row.get(4)?,
-                description: row.get(5)?,
+                group: row.get(1)?,
+                tl: row.get(2)?,
+                colour: row.get(3)?,
+                timestamp: row.get(4)?,
+                expires_at: row.get(5)?,
+                description: row.get(6)?,
                 tags: tags_vec,
             })
         })?;
@@ -351,26 +305,33 @@ pub async fn get_history(pool: DbPool, class: String, tl: String) -> Result<Vec<
     }).await?
 }
 
-pub async fn get_metrics(pool: DbPool, class: String, tl: String) -> Result<Vec<crate::models::MetricRecord>> {
+pub async fn get_metrics(pool: DbPool, class: String, group: String, tl: String) -> Result<Vec<crate::models::MetricRecord>> {
     let pool = pool.clone();
     task::spawn_blocking(move || {
         let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
         let mut stmt = conn.prepare(
-            "SELECT class, tl, timestamp, key, value, value_str, metric_type, unit, yellow_at, red_at FROM metrics WHERE class = ? AND tl = ? ORDER BY timestamp ASC"
+            "SELECT class, group_name, tl, timestamp, key, value, value_str, metric_type, unit, green_if, yellow_if FROM metrics WHERE class = ? AND group_name = ? AND tl = ? ORDER BY timestamp ASC"
         )?;
 
-        let metrics_iter = stmt.query_map(params![class, tl], |row| {
+        let metrics_iter = stmt.query_map(params![class, group, tl], |row| {
+             let green_if_str: Option<String> = row.get(9)?;
+             let yellow_if_str: Option<String> = row.get(10)?;
+             
+             let green_if = green_if_str.and_then(|s| serde_json::from_str(&s).ok());
+             let yellow_if = yellow_if_str.and_then(|s| serde_json::from_str(&s).ok());
+
              Ok(crate::models::MetricRecord {
                 class: row.get(0)?,
-                tl: row.get(1)?,
-                timestamp: row.get(2)?,
-                key: row.get(3)?,
-                value: row.get::<_, Option<f64>>(4)?.unwrap_or(0.0),
-                value_str: row.get(5)?,
-                metric_type: row.get(6)?,
-                unit: row.get(7)?,
-                yellow_at: row.get(8)?,
-                red_at: row.get(9)?,
+                group: row.get(1)?,
+                tl: row.get(2)?,
+                timestamp: row.get(3)?,
+                key: row.get(4)?,
+                value: row.get::<_, Option<f64>>(5)?.unwrap_or(0.0),
+                value_str: row.get(6)?,
+                metric_type: row.get(7)?,
+                unit: row.get(8)?,
+                green_if,
+                yellow_if,
             })
         })?;
 
@@ -387,49 +348,47 @@ pub async fn check_and_update_expirations(pool: DbPool) -> Result<()> {
     task::spawn_blocking(move || {
         let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
 
-        // Find latest state for each traffic light
         let mut stmt = conn.prepare(
             r#"
             WITH ranked_tls AS (
-                SELECT class, tl, colour, timestamp, expires_at, ROW_NUMBER() OVER (PARTITION BY class, tl ORDER BY timestamp DESC) as rn
+                SELECT class, group_name, tl, colour, timestamp, expires_at, ROW_NUMBER() OVER (PARTITION BY class, group_name, tl ORDER BY timestamp DESC) as rn
                 FROM traffic_lights
             )
-            SELECT class, tl, expires_at
+            SELECT class, group_name, tl, expires_at
             FROM ranked_tls
             WHERE rn = 1 AND colour != 'purple' AND expires_at IS NOT NULL
             "#
         )?;
 
-        let tls_to_update: Vec<(String, String, String)> = stmt.query_map([], |row| {
-             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        let tls_to_update: Vec<(String, String, String, String)> = stmt.query_map([], |row| {
+             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?
         .filter_map(|r| r.ok())
         .collect();
 
         let now = chrono::Utc::now();
 
-        for (class, tl, expires_at_str) in tls_to_update {
+        for (class, group, tl, expires_at_str) in tls_to_update {
             if let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(&expires_at_str) {
                 if expires_at.with_timezone(&chrono::Utc) < now {
-                    // Expired! Insert purple record.
-                    // We use current time as timestamp for the new state.
                     let timestamp = now.to_rfc3339();
                     let description = "Expired (Automatic Housekeeping)";
-                    let tags_json = "[]"; // Empty tags for housekeeping update
+                    let tags_json = "[]";
 
                     conn.execute(
-                        "INSERT INTO traffic_lights (class, tl, colour, timestamp, expires_at, description, tags) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO traffic_lights (class, group_name, tl, colour, timestamp, expires_at, description, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         params![
                             class,
+                            group,
                             tl,
                             "purple",
                             timestamp,
-                            None::<String>, // Clear expires_at so it doesn't expire again immediately (though purple check handles it)
+                            None::<String>,
                             description,
                             tags_json
                         ],
                     )?;
-                    println!("Housekeeping: Set {}/{} to purple (expired at {})", class, tl, expires_at_str);
+                    println!("Housekeeping: Set {}/{}/{} to purple (expired at {})", class, group, tl, expires_at_str);
                 }
             }
         }

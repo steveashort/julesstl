@@ -44,68 +44,112 @@ pub async fn get_incidents(
     }
 }
 
-fn infer_colour(payload: &IngestPayload) -> String {
-    let mut is_red = false;
-    let mut is_yellow = false;
-
-    if let Some(data) = &payload.data {
-        for (_, metric) in data {
-            // Logic for Enum
-            if metric.metric_type == "enum" {
-                if let Value::String(val) = &metric.value {
-                    if let Some(green_if) = &metric.green_if {
-                        if !green_if.contains(val) {
-                            // Not green, check yellow
-                            if let Some(yellow_if) = &metric.yellow_if {
-                                if yellow_if.contains(val) {
-                                    is_yellow = true;
-                                } else {
-                                    // If not green and not yellow (and not specified), assume red?
-                                    // Or maybe default to red if explicitly not green/yellow?
-                                    // Based on prompt, usually if something is wrong it goes yellow or red.
-                                    // If strict, assume Red if not matched.
-                                    // Let's assume Red if not in green or yellow list.
-                                    is_red = true;
-                                }
-                            } else {
-                                // Not green, no yellow rules -> Red
-                                is_red = true;
+fn check_matches(val_str: Option<&str>, val_num: Option<f64>, rules: Option<&Vec<String>>) -> bool {
+    if let Some(rules) = rules {
+        for rule in rules {
+            if rule.contains(':') {
+                if let Some(v) = val_num {
+                    let parts: Vec<&str> = rule.split(':').collect();
+                    if parts.len() == 2 {
+                        if let (Ok(min), Ok(max)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
+                            if v >= min && v < max {
+                                return true;
                             }
                         }
                     }
                 }
-            }
-            // Logic for Gauge
-            else if metric.metric_type == "gauge" {
-                if let Value::Number(val) = &metric.value {
-                    if let Some(v) = val.as_f64() {
-                        if let Some(red_at) = metric.red_at {
-                             // Assuming higher is worse for now based on CPU example.
-                             // But what if lower is worse? Usually "at" implies a threshold.
-                             // Example: red at 90. value 73. 73 < 90.
-                             // Example: yellow at 70. 73 > 70.
-                             // So if v >= red_at -> Red.
-                             if v >= red_at {
-                                 is_red = true;
-                             }
-                        }
-                        if let Some(yellow_at) = metric.yellow_at {
-                            if v >= yellow_at {
-                                is_yellow = true;
-                            }
+            } else {
+                if let Some(s) = val_str {
+                    if s == rule {
+                        return true;
+                    }
+                }
+                if let Some(v) = val_num {
+                    if let Ok(rv) = rule.parse::<f64>() {
+                        if (v - rv).abs() < f64::EPSILON {
+                            return true;
                         }
                     }
                 }
             }
         }
     }
+    false
+}
 
-    if is_red {
+fn infer_colour(payload: &IngestPayload) -> String {
+    let mut has_red = false;
+    let mut has_yellow = false;
+
+    if let Some(data) = &payload.data {
+        for (_, metric) in data {
+            let (val_num, val_str_owned) = match &metric.value {
+                Value::Number(n) => (n.as_f64(), None),
+                Value::String(s) => (None, Some(s.clone())),
+                _ => (None, None),
+            };
+            let val_str = val_str_owned.as_deref();
+
+            // Check Yellow first (Precedence)
+            if check_matches(val_str, val_num, metric.yellow_if.as_ref()) {
+                has_yellow = true;
+                continue;
+            }
+
+            // Check Green
+            if check_matches(val_str, val_num, metric.green_if.as_ref()) {
+                continue;
+            }
+
+            // Neither -> Red
+            has_red = true;
+        }
+    }
+
+    if has_red {
         "red".to_string()
-    } else if is_yellow {
+    } else if has_yellow {
         "yellow".to_string()
     } else {
         "green".to_string()
+    }
+}
+
+pub async fn list_traffic_lights(
+    State(pool): State<db::DbPool>,
+) -> Result<Json<Vec<TrafficLightState>>, StatusCode> {
+    match db::get_current_states(pool).await {
+        Ok(tls) => Ok(Json(tls)),
+        Err(e) => {
+             eprintln!("Failed to fetch TLs: {}", e);
+             Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+pub async fn get_history(
+    State(pool): State<db::DbPool>,
+    Path((class, group, tl)): Path<(String, String, String)>,
+) -> Result<Json<Vec<TrafficLightState>>, StatusCode> {
+    match db::get_history(pool, class, group, tl).await {
+        Ok(tls) => Ok(Json(tls)),
+        Err(e) => {
+             eprintln!("Failed to fetch history: {}", e);
+             Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+pub async fn get_metrics(
+    State(pool): State<db::DbPool>,
+    Path((class, group, tl)): Path<(String, String, String)>,
+) -> Result<Json<Vec<MetricRecord>>, StatusCode> {
+    match db::get_metrics(pool, class, group, tl).await {
+        Ok(metrics) => Ok(Json(metrics)),
+        Err(e) => {
+             eprintln!("Failed to fetch metrics: {}", e);
+             Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }
 
@@ -124,14 +168,13 @@ mod tests {
             value: json!(0.5),
             metric_type: "gauge".to_string(),
             unit: None,
-            green_if: None,
+            green_if: Some(vec!["0:1.0".to_string()]),
             yellow_if: None,
-            yellow_at: Some(1.0),
-            red_at: Some(2.0),
         });
 
         let payload = IngestPayload {
             class: "test".to_string(),
+            group: "default".to_string(),
             tl: "t1".to_string(),
             colour: "inferred".to_string(),
             expires_at: None,
@@ -145,21 +188,20 @@ mod tests {
     }
 
     #[test]
-    fn test_infer_colour_yellow() {
+    fn test_infer_colour_yellow_overlap() {
         let mut data = HashMap::new();
         data.insert("load".to_string(), MetricData {
             key: "load".to_string(),
             value: json!(1.5),
             metric_type: "gauge".to_string(),
             unit: None,
-            green_if: None,
-            yellow_if: None,
-            yellow_at: Some(1.0),
-            red_at: Some(2.0),
+            green_if: Some(vec!["0:2.0".to_string()]),
+            yellow_if: Some(vec!["1.0:2.0".to_string()]), // Overlap
         });
 
         let payload = IngestPayload {
             class: "test".to_string(),
+            group: "default".to_string(),
             tl: "t1".to_string(),
             colour: "inferred".to_string(),
             expires_at: None,
@@ -173,21 +215,20 @@ mod tests {
     }
 
     #[test]
-    fn test_infer_colour_red() {
+    fn test_infer_colour_red_outside() {
         let mut data = HashMap::new();
         data.insert("load".to_string(), MetricData {
             key: "load".to_string(),
             value: json!(2.5),
             metric_type: "gauge".to_string(),
             unit: None,
-            green_if: None,
-            yellow_if: None,
-            yellow_at: Some(1.0),
-            red_at: Some(2.0),
+            green_if: Some(vec!["0:1.0".to_string()]),
+            yellow_if: Some(vec!["1.0:2.0".to_string()]),
         });
 
         let payload = IngestPayload {
             class: "test".to_string(),
+            group: "default".to_string(),
             tl: "t1".to_string(),
             colour: "inferred".to_string(),
             expires_at: None,
@@ -198,43 +239,5 @@ mod tests {
         };
 
         assert_eq!(infer_colour(&payload), "red");
-    }
-}
-
-pub async fn list_traffic_lights(
-    State(pool): State<db::DbPool>,
-) -> Result<Json<Vec<TrafficLightState>>, StatusCode> {
-    match db::get_current_states(pool).await {
-        Ok(tls) => Ok(Json(tls)),
-        Err(e) => {
-             eprintln!("Failed to fetch TLs: {}", e);
-             Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-pub async fn get_history(
-    State(pool): State<db::DbPool>,
-    Path((class, tl)): Path<(String, String)>,
-) -> Result<Json<Vec<TrafficLightState>>, StatusCode> {
-    match db::get_history(pool, class, tl).await {
-        Ok(tls) => Ok(Json(tls)),
-        Err(e) => {
-             eprintln!("Failed to fetch history: {}", e);
-             Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-pub async fn get_metrics(
-    State(pool): State<db::DbPool>,
-    Path((class, tl)): Path<(String, String)>,
-) -> Result<Json<Vec<MetricRecord>>, StatusCode> {
-    match db::get_metrics(pool, class, tl).await {
-        Ok(metrics) => Ok(Json(metrics)),
-        Err(e) => {
-             eprintln!("Failed to fetch metrics: {}", e);
-             Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
     }
 }
