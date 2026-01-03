@@ -1,0 +1,7 @@
+{
+  "history_purge_max_records": 10000,
+  "history_purge_max_days": 30,
+  "default_expiration_minutes": 60,
+  "purple_to_yellow_minutes": 1440,
+  "purple_to_red_minutes": 4320
+}

@@ -31,9 +31,9 @@ for colour, count in sequence:
             "group": "test-group",
             "tl": TL_NAME,
             "colour": colour,
-            "expires_at": (current_time + timedelta(hours=1)).isoformat() + "Z",
+            "expires_at": (current_time + timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ'),
             "description": f"Test update {i+1} for {colour}",
-            "timestamp": current_time.isoformat() + "Z",
+            "timestamp": current_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
             "tags": ["test_run"]
         }
 

@@ -52,9 +52,9 @@ for s in range(NUM_SERVERS):
             "group": group_name,
             "tl": server_name,
             "colour": "inferred",
-            "expires_at": (current_time + timedelta(hours=INTERVAL_HOURS + 1)).isoformat() + "Z",
+            "expires_at": (current_time + timedelta(hours=INTERVAL_HOURS + 1)).strftime('%Y-%m-%dT%H:%M:%SZ'),
             "description": f"Bulk test update for {server_name}",
-            "timestamp": current_time.isoformat() + "Z",
+            "timestamp": current_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
             "tags": tags,
             "data": {
                 "CPU": {

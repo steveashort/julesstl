@@ -28,7 +28,7 @@ const TrafficLightCard: React.FC<Props> = ({ tl }) => {
           </span>
         </div>
         
-        <p className="text-xs text-gray-600 dark:text-gray-400 truncate mb-2">{tl.description}</p>
+        <p className="text-xs text-gray-600 dark:text-gray-400 truncate mb-2" title={tl.description}>{tl.description}</p>
         
         <div className="mt-auto pt-2 border-t dark:border-gray-700 flex flex-col gap-1">
              <div className="flex flex-wrap gap-1 mb-1">

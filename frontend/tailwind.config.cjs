@@ -7,9 +7,15 @@ module.exports = {
   darkMode: 'class',
   theme: {
     extend: {
-      fontFamily: {
-        sans: ['Inter', 'sans-serif'],
+      keyframes: {
+        'pulse-bg': {
+          '0%, 100%': { opacity: 0.7 },
+          '50%': { opacity: 1 },
+        }
       },
+      animation: {
+        'pulse-bg': 'pulse-bg 3s ease-in-out infinite',
+      }
     },
   },
   plugins: [],

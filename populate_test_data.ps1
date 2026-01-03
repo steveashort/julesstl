@@ -88,6 +88,7 @@ while ($currentTime -lt $endTime) {
 
     $payload = @{
         class = $className
+        group = "default"
         tl = $tlName
         colour = "inferred"
         expires_at = $expiresAt
