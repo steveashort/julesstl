@@ -5,11 +5,38 @@ import MetricsChart from './components/MetricsChart';
 import StateTimelineChart from './components/StateTimelineChart';
 import Sidebar from './components/Sidebar';
 import clsx from 'clsx';
-import { Filter, AlertTriangle, Moon, Sun, Search, BarChartHorizontal, Settings as SettingsIcon, CheckCircle } from 'lucide-react';
+import { Filter, AlertTriangle, Moon, Sun, Search, BarChartHorizontal, Settings as SettingsIcon, CheckCircle, Timer } from 'lucide-react';
 
 const setDashboardFilters = (filters: object) => {
     sessionStorage.setItem('dashboardFilters', JSON.stringify(filters));
 };
+
+const formatDuration = (seconds: number) => {
+    const val = Math.max(0, seconds);
+    if (val === 0) return "0m";
+    
+    const d = Math.floor(val / 86400);
+    const h = Math.floor((val % 86400) / 3600);
+    const m = Math.floor((val % 3600) / 60);
+    const s = Math.floor(val % 60);
+
+    const parts = [];
+    if (d > 0) parts.push(`${d}d`);
+    if (h > 0) parts.push(`${h}h`);
+    if (m > 0) parts.push(`${m}m`);
+    
+    // If less than a minute, show seconds, otherwise stop at minutes
+    if (parts.length === 0) return `${s}s`;
+    
+    return parts.join(' ');
+};
+
+const DurationDisplay: React.FC<{ seconds: number, className?: string }> = ({ seconds, className }) => (
+    <span className={clsx("inline-flex items-center gap-1 font-mono", className)}>
+        <Timer size={14} className="opacity-70" />
+        <span>{formatDuration(seconds)}</span>
+    </span>
+);
 
 const getInitialFilters = () => {
     try {
@@ -241,16 +268,6 @@ const TopOffendersReport: React.FC = () => {
         });
     }, [hours]);
     
-    const formatDuration = (seconds: number) => {
-      if (seconds <= 0 || isNaN(seconds)) return "00:00:00";
-      const d = Math.floor(seconds / 86400);
-      const h = Math.floor((seconds % 86400) / 3600);
-      const m = Math.floor((seconds % 3600) / 60);
-      const s = Math.floor(seconds % 60);
-      const ts = `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
-      return d > 0 ? `${d}d ${ts}` : ts;
-    };
-
     return (
         <div className="p-4 pt-16">
             <div className="flex justify-between items-center mb-6">
@@ -281,7 +298,10 @@ const TopOffendersReport: React.FC = () => {
                         return (
                             <div key={key} className="p-4 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
                                 <h3 className="font-bold text-lg dark:text-white mb-2">{cls} / {grp} / {tl}</h3>
-                                <p className="text-sm text-red-500 mb-4">Total Red Time: <span className="font-mono">{formatDuration(totalSeconds)}</span></p>
+                                <div className="text-sm text-red-500 mb-4 flex items-center gap-2">
+                                    <span>Total Red Time:</span>
+                                    <DurationDisplay seconds={totalSeconds} />
+                                </div>
                                 {history.length > 0 ? <StateTimelineChart history={history} domain={domain} /> : <p>No history found for timeline.</p>}
                             </div>
                         )
@@ -437,7 +457,7 @@ const IncidentsReport: React.FC = () => {
                                         </td>
                                         <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300">{new Date(incident.start_time).toLocaleString()}</td>
                                         <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300">
-                                            {incident.duration_seconds > 3600 ? `${(incident.duration_seconds/3600).toFixed(1)}h` : `${(incident.duration_seconds/60).toFixed(0)}m`}
+                                            <DurationDisplay seconds={Math.max(0, incident.duration_seconds)} />
                                         </td>
                                         <td className="py-2 px-4 border-b dark:border-gray-700 text-sm text-gray-600 dark:text-gray-400 truncate max-w-xs">{incident.description}</td>
                                     </tr>
@@ -482,6 +502,59 @@ const Details: React.FC<{ cls: string, grp: string, tl: string }> = ({ cls, grp,
     
     return { start: min, end: max };
   }, [chartDomain, metrics, history]);
+
+  const aggregatedHistory = useMemo(() => {
+    if (history.length === 0) return [];
+    
+    // Sort ascending for processing
+    const sorted = [...history]
+        .filter(h => {
+             const t = new Date(h.timestamp).getTime();
+             return t >= effectiveDomain.start && t <= effectiveDomain.end;
+        })
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    
+    const groups: {
+        colour: string;
+        start: string;
+        end: string;
+        count: number;
+        description: string;
+    }[] = [];
+
+    let currentGroup: typeof groups[0] | null = null;
+
+    for (const record of sorted) {
+        if (!currentGroup) {
+            currentGroup = {
+                colour: record.colour,
+                start: record.timestamp,
+                end: record.timestamp,
+                count: 1,
+                description: record.description || ''
+            };
+        } else {
+            if (record.colour === currentGroup.colour) {
+                currentGroup.end = record.timestamp;
+                currentGroup.count++;
+                currentGroup.description = record.description || currentGroup.description; 
+            } else {
+                groups.push(currentGroup);
+                currentGroup = {
+                    colour: record.colour,
+                    start: record.timestamp,
+                    end: record.timestamp,
+                    count: 1,
+                    description: record.description || ''
+                };
+            }
+        }
+    }
+    if (currentGroup) groups.push(currentGroup);
+
+    // Reverse to show newest first
+    return groups.reverse();
+  }, [history, effectiveDomain]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -570,16 +643,6 @@ const Details: React.FC<{ cls: string, grp: string, tl: string }> = ({ cls, grp,
           setChartDomain([maxTime - rangeMillis, maxTime]);
       }
   };
-
-  const formatDuration = (seconds: number) => {
-      if (seconds <= 0 || isNaN(seconds)) return "00:00:00";
-      const d = Math.floor(seconds / 86400);
-      const h = Math.floor((seconds % 86400) / 3600);
-      const m = Math.floor((seconds % 3600) / 60);
-      const s = Math.floor(seconds % 60);
-      const ts = `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
-      return d > 0 ? `${d}d ${ts}` : ts;
-  };
   
   const handleClassClick = () => {
       setDashboardFilters({ class: cls });
@@ -614,14 +677,19 @@ const Details: React.FC<{ cls: string, grp: string, tl: string }> = ({ cls, grp,
     <div className="p-4">
       <div className="sticky top-0 z-30 bg-gray-100 dark:bg-gray-900 shadow-sm">
           {latestTL && (
-              <div className={clsx("w-full p-2 text-center text-white font-bold animate-pulse-bg rounded-b-lg", {
+              <div className={clsx("w-full p-2 flex justify-center items-center gap-2 text-white font-bold animate-pulse-bg rounded-b-lg", {
                   'bg-green-500 shadow-[0_5px_15px_-5px_rgba(34,197,94,0.7)]': latestTL.colour === 'green',
                   'bg-yellow-500 shadow-[0_5px_15px_-5px_rgba(234,179,8,0.7)]': latestTL.colour === 'yellow',
                   'bg-red-500 shadow-[0_5px_15px_-5px_rgba(239,68,68,0.7)]': latestTL.colour === 'red',
                   'bg-purple-500 shadow-[0_5px_15px_-5px_rgba(139,92,246,0.7)]': latestTL.colour === 'purple',
                   'bg-gray-500': !['green', 'yellow', 'red', 'purple'].includes(latestTL.colour),
               })}>
-                  {latestTL.colour.toUpperCase()} {remainingTime && `- expires in ${remainingTime}`}
+                  {latestTL.colour.toUpperCase()} 
+                  {remainingTime && (
+                      <span className="flex items-center gap-1 text-sm font-normal bg-black/20 px-2 py-0.5 rounded">
+                          <Timer size={14} /> expires in {remainingTime}
+                      </span>
+                  )}
               </div>
           )}
           <div className="p-4 border-b dark:border-gray-800">
@@ -690,6 +758,61 @@ const Details: React.FC<{ cls: string, grp: string, tl: string }> = ({ cls, grp,
                     <MetricsChart data={metrics} metricKey={key} domain={chartDomain} onZoom={handleZoom} />
                 </div>
            )) : <p className="dark:text-gray-400">No metrics available.</p>}
+        </div>
+
+        <div>
+            <h2 className="text-xl font-semibold mb-4 dark:text-gray-200">History Records</h2>
+            <div className="bg-white dark:bg-gray-800 rounded shadow-sm border dark:border-gray-700 overflow-hidden">
+                <table className="min-w-full">
+                    <thead>
+                        <tr className="bg-gray-50 dark:bg-gray-700 border-b dark:border-gray-600">
+                            <th className="py-2 px-4 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Colour</th>
+                            <th className="py-2 px-4 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Start Time</th>
+                            <th className="py-2 px-4 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">End Time</th>
+                            <th className="py-2 px-4 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Updates</th>
+                            <th className="py-2 px-4 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Duration</th>
+                             <th className="py-2 px-4 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                        {aggregatedHistory.map((group, i) => (
+                            <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                                <td className="py-2 px-4 whitespace-nowrap">
+                                    <span className={clsx("px-2 py-0.5 rounded text-xs font-medium uppercase", {
+                                        'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300': group.colour === 'green',
+                                        'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300': group.colour === 'yellow',
+                                        'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300': group.colour === 'red',
+                                        'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300': group.colour === 'purple',
+                                        'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300': !['green', 'yellow', 'red', 'purple'].includes(group.colour),
+                                    })}>
+                                        {group.colour}
+                                    </span>
+                                </td>
+                                <td className="py-2 px-4 text-sm text-gray-900 dark:text-gray-300 whitespace-nowrap">
+                                    {new Date(group.start).toLocaleString()}
+                                </td>
+                                <td className="py-2 px-4 text-sm text-gray-900 dark:text-gray-300 whitespace-nowrap">
+                                    {new Date(group.end).toLocaleString()}
+                                </td>
+                                <td className="py-2 px-4 text-sm text-gray-900 dark:text-gray-300 whitespace-nowrap">
+                                    {group.count}
+                                </td>
+                                <td className="py-2 px-4 text-sm text-gray-900 dark:text-gray-300 whitespace-nowrap">
+                                    <DurationDisplay seconds={(new Date(group.end).getTime() - new Date(group.start).getTime()) / 1000} />
+                                </td>
+                                <td className="py-2 px-4 text-sm text-gray-500 dark:text-gray-400">
+                                    {group.description || '-'}
+                                </td>
+                            </tr>
+                        ))}
+                        {aggregatedHistory.length === 0 && (
+                            <tr>
+                                <td colSpan={6} className="py-4 text-center text-gray-500 dark:text-gray-400">No history records found.</td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
         </div>
       </div>
     </div>

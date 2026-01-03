@@ -8,3 +8,7 @@ frontend/dist/
 dist/
 .DS_Store
 traffic_lights.db.wal
+
+server.log
+server_debug.log
+check_db.py

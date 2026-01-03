@@ -67,7 +67,7 @@ def main():
             servers_to_update = random.sample(all_servers, k=random.randint(int(NUM_SERVERS * 0.5), int(NUM_SERVERS * 0.8)))
             
             for tl_name in servers_to_update:
-                now = datetime.now()
+                now = datetime.utcnow()
                 expires_at = now + timedelta(minutes=random.randint(1, 20))
                 
                 status_enums = ["Server Up", "Server OK", "Server hot", "Service Down", "High Load"]
@@ -122,7 +122,7 @@ def main():
             stores_to_update = random.sample(all_stores, k=random.randint(int(NUM_STORES * 0.5), int(NUM_STORES * 0.8)))
 
             for tl_name in stores_to_update:
-                now = datetime.now()
+                now = datetime.utcnow()
                 expires_at = now + timedelta(minutes=random.randint(1, 20))
                 
                 payload = {
