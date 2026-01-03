@@ -1,33 +1,24 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { getTrafficLights, getHistory, getMetrics, getIncidents, overrideColour, getTopOffenders, getSettings, updateSettings, TrafficLightState, MetricRecord, IncidentRecord, TopOffender, AppSettings } from './api';
+import { getTrafficLights, getHistory, getMetrics, getIncidents, overrideColour, getTopOffenders, getSettings, updateSettings, getSystemConfig, TrafficLightState, MetricRecord, IncidentRecord, TopOffender, AppSettings, SystemLimits } from './api';
 import TrafficLightCard from './components/TrafficLightCard';
 import MetricsChart from './components/MetricsChart';
 import StateTimelineChart from './components/StateTimelineChart';
 import Sidebar from './components/Sidebar';
 import clsx from 'clsx';
-import { Filter, AlertTriangle, Moon, Sun, Search, BarChartHorizontal, Settings as SettingsIcon, CheckCircle, Timer } from 'lucide-react';
-
-const setDashboardFilters = (filters: object) => {
-    sessionStorage.setItem('dashboardFilters', JSON.stringify(filters));
-};
+import { Filter, AlertTriangle, Moon, Sun, Search, BarChartHorizontal, Settings as SettingsIcon, CheckCircle, Timer, Home } from 'lucide-react';
 
 const formatDuration = (seconds: number) => {
     const val = Math.max(0, seconds);
     if (val === 0) return "0m";
-    
     const d = Math.floor(val / 86400);
     const h = Math.floor((val % 86400) / 3600);
     const m = Math.floor((val % 3600) / 60);
     const s = Math.floor(val % 60);
-
     const parts = [];
     if (d > 0) parts.push(`${d}d`);
     if (h > 0) parts.push(`${h}h`);
     if (m > 0) parts.push(`${m}m`);
-    
-    // If less than a minute, show seconds, otherwise stop at minutes
     if (parts.length === 0) return `${s}s`;
-    
     return parts.join(' ');
 };
 
@@ -43,16 +34,18 @@ const getInitialFilters = () => {
         const stored = sessionStorage.getItem('dashboardFilters');
         return stored ? JSON.parse(stored) : {};
     } catch (e) {
-        console.error("Failed to parse dashboard filters", e);
         return {};
     }
 };
 
-const Dashboard: React.FC = () => {
-  const [tls, setTls] = useState<TrafficLightState[]>([]);
-  const [loading, setLoading] = useState(true);
-  
-  const [filters, setFilters] = useState(() => getInitialFilters());
+interface DashboardProps {
+    tls: TrafficLightState[];
+    loading: boolean;
+    filters: any;
+    setFilters: (f: any) => void;
+}
+
+const Dashboard: React.FC<DashboardProps> = ({ tls, loading, filters, setFilters }) => {
   const {
     class: selectedClass = '',
     group: selectedGroup = '',
@@ -64,24 +57,6 @@ const Dashboard: React.FC = () => {
   const updateFilters = (newFilters: object) => {
       setFilters((prev: object) => ({ ...prev, ...newFilters }));
   };
-  
-  useEffect(() => {
-    sessionStorage.setItem('dashboardFilters', JSON.stringify(filters));
-  }, [filters]);
-
-  useEffect(() => {
-    getTrafficLights().then(data => {
-      setTls(data || []);
-      setLoading(false);
-    }).catch(e => {
-        console.error("Failed to fetch TLs:", e);
-        setLoading(false);
-    });
-    const interval = setInterval(() => {
-      getTrafficLights().then(setTls).catch(console.error);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
 
   const classes = useMemo(() => Array.from(new Set(tls.map(tl => tl.class))).sort(), [tls]);
   const groups = useMemo(() => Array.from(new Set(tls.map(tl => tl.group))).sort(), [tls]);
@@ -103,7 +78,7 @@ const Dashboard: React.FC = () => {
       if (selectedClass && tl.class !== selectedClass) return false;
       if (selectedGroup && tl.group !== selectedGroup) return false;
       if (selectedColour && tl.colour !== selectedColour) return false;
-      if (selectedTags.length > 0 && !selectedTags.every(t => (tl.tags || []).includes(t))) return false;
+      if (selectedTags.length > 0 && !selectedTags.every((t: string) => (tl.tags || []).includes(t))) return false;
       if (searchTerm && !`${tl.class} ${tl.group} ${tl.tl}`.toLowerCase().includes(searchTerm.toLowerCase())) return false;
       return true;
     });
@@ -123,9 +98,7 @@ const Dashboard: React.FC = () => {
       updateFilters({ tags: newTags });
   };
   
-  const clearFilters = () => {
-      setFilters({});
-  };
+  const clearFilters = () => setFilters({});
 
   if (loading) return <div className="p-4 dark:text-gray-200">Loading Dashboard...</div>;
 
@@ -135,20 +108,8 @@ const Dashboard: React.FC = () => {
         <div className="flex justify-between items-center">
              <div className="flex items-center gap-4">
                 <h1 className="text-2xl font-bold dark:text-white">Traffic Light Dashboard</h1>
-                <button 
-                    onClick={() => window.location.hash = '#/incidents'} 
-                    className="flex items-center text-red-600 border border-red-600 px-3 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
-                >
-                    <AlertTriangle className="w-4 h-4 mr-2" />
-                    Incidents
-                </button>
-                <button 
-                    onClick={() => window.location.hash = '#/reports/top-offenders'} 
-                    className="flex items-center text-blue-600 border border-blue-600 px-3 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20"
-                >
-                    <BarChartHorizontal className="w-4 h-4 mr-2" />
-                    Top Offenders
-                </button>
+                <button onClick={() => window.location.hash = '#/incidents'} className="flex items-center text-red-600 border border-red-600 px-3 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"><AlertTriangle className="w-4 h-4 mr-2" />Incidents</button>
+                <button onClick={() => window.location.hash = '#/reports/top-offenders'} className="flex items-center text-blue-600 border border-blue-600 px-3 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20"><BarChartHorizontal className="w-4 h-4 mr-2" />Top Offenders</button>
             </div>
         </div>
 
@@ -156,24 +117,11 @@ const Dashboard: React.FC = () => {
            <div className="flex flex-wrap gap-2 items-center mb-2">
               <Filter className="w-5 h-5 text-gray-500 dark:text-gray-400 mr-2" />
               <div className="relative flex-grow">
-                  <input
-                    type="text"
-                    placeholder="Search Class, Group, or TL..."
-                    value={searchTerm}
-                    onChange={e => updateFilters({ searchTerm: e.target.value })}
-                    className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200 w-full"
-                    list="search-options"
-                  />
+                  <input type="text" placeholder="Search..." value={searchTerm} onChange={e => updateFilters({ searchTerm: e.target.value })} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200 w-full" list="search-options" />
                    <datalist id="search-options">
-                        {searchOptions
-                            .filter(opt => opt.value.toLowerCase().includes(searchTerm.toLowerCase()))
-                            .slice(0, 10)
-                            .map(opt => (
-                                <option key={`${opt.type}-${opt.value}`} value={opt.value}>
-                                    {opt.type}: {opt.value}
-                                </option>
-                            ))
-                        }
+                        {searchOptions.filter(opt => opt.value.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 10).map(opt => (
+                            <option key={`${opt.type}-${opt.value}`} value={opt.value}>{opt.type}: {opt.value}</option>
+                        ))}
                     </datalist>
               </div>
               <select value={selectedClass} onChange={e => updateFilters({ class: e.target.value })} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
@@ -192,45 +140,27 @@ const Dashboard: React.FC = () => {
                 <button onClick={clearFilters} className="text-red-500 text-sm hover:underline ml-2">Clear All</button>
               )}
            </div>
-           
            <div className="flex flex-wrap gap-1 items-center mt-2 border-t dark:border-gray-700 pt-2">
               <span className="text-xs text-gray-500 mr-2">Tags:</span>
               {tags.map(t => (
-                  <button 
-                    key={t} 
-                    onClick={() => toggleTag(t)}
-                    className={clsx("px-2 py-0.5 rounded text-xs border transition-colors", {
-                        "bg-blue-600 text-white border-blue-600": selectedTags.includes(t),
-                        "bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600": !selectedTags.includes(t)
-                    })}
-                  >
-                    {t}
-                  </button>
+                  <button key={t} onClick={() => toggleTag(t)} className={clsx("px-2 py-0.5 rounded text-xs border transition-colors", { "bg-blue-600 text-white border-blue-600": selectedTags.includes(t), "bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600": !selectedTags.includes(t) })}>{t}</button>
               ))}
            </div>
         </div>
       </div>
 
-      <div className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-        Showing {filteredTls.length} of {tls.length} traffic lights
-      </div>
+      <div className="text-sm text-gray-500 dark:text-gray-400 mb-4">Showing {filteredTls.length} of {tls.length} traffic lights</div>
 
-      {Object.entries(grouped).length === 0 ? (
-        <div className="text-center text-gray-500 py-10 dark:text-gray-400">No traffic lights found.</div>
-      ) : (
+      {Object.entries(grouped).length === 0 ? <div className="text-center text-gray-500 py-10 dark:text-gray-400">No traffic lights found.</div> : (
         Object.entries(grouped).map(([cls, classGroups]) => (
           <div key={cls} className="mb-8">
             <h2 className="text-xl font-semibold mb-2 dark:text-gray-200">{cls}</h2>
             {Object.entries(classGroups).map(([grp, items]) => (
                 <div key={grp} className="mb-6 pl-4 border-l-2 border-gray-200 dark:border-gray-700">
-                    <h3 className="text-lg font-medium mb-3 dark:text-gray-300 flex items-center">
-                        <span className="bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded text-sm">{grp}</span>
-                    </h3>
+                    <h3 className="text-lg font-medium mb-3 dark:text-gray-300 flex items-center"><span className="bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded text-sm">{grp}</span></h3>
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                     {items.map(tl => (
-                        <div key={`${tl.group}-${tl.tl}`} className="cursor-pointer" onClick={() => window.location.hash = `#/details/${tl.class}/${tl.group}/${tl.tl}`}>
-                        <TrafficLightCard tl={tl} />
-                        </div>
+                        <div key={`${tl.group}-${tl.tl}`} className="cursor-pointer" onClick={() => window.location.hash = `#/details/${tl.class}/${tl.group}/${tl.tl}`}><TrafficLightCard tl={tl} /></div>
                     ))}
                     </div>
                 </div>
@@ -256,16 +186,11 @@ const TopOffendersReport: React.FC = () => {
             const historyPromises = data.map(([cls, grp, tl]) => getHistory(cls, grp, tl));
             Promise.all(historyPromises).then(historiesData => {
                 const newHistories: Record<string, TrafficLightState[]> = {};
-                historiesData.forEach((h, i) => {
-                    newHistories[offenderKeys[i]] = h;
-                });
+                historiesData.forEach((h, i) => { newHistories[offenderKeys[i]] = h; });
                 setHistories(newHistories);
                 setLoading(false);
             });
-        }).catch(e => {
-            console.error(e);
-            setLoading(false);
-        });
+        }).catch(() => setLoading(false));
     }, [hours]);
     
     return (
@@ -273,24 +198,16 @@ const TopOffendersReport: React.FC = () => {
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-2xl font-bold dark:text-white">Top 10 Red Offenders</h1>
                 <div className="flex items-center gap-4">
-                    <span className="mr-2 text-sm text-gray-600 dark:text-gray-400">Time range:</span>
-                    {[24, 72, 720].map(h => {
-                        const days = h / 24;
-                        return (
-                            <button key={h} onClick={() => setHours(h)} className={clsx("px-3 py-1 rounded", {
-                                "bg-blue-600 text-white": hours === h,
-                                "bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600": hours !== h,
-                            })}>
-                                {days} {days === 1 ? 'Day' : 'Days'}
-                            </button>
-                        )
-                    })}
+                    {[24, 72, 720].map(h => (
+                        <button key={h} onClick={() => setHours(h)} className={clsx("px-3 py-1 rounded", { "bg-blue-600 text-white": hours === h, "bg-gray-200 dark:bg-gray-700": hours !== h })}>
+                            {h/24} {h === 24 ? 'Day' : 'Days'}
+                        </button>
+                    ))}
                 </div>
             </div>
-
             {loading ? <div className="text-center py-10 dark:text-gray-300">Loading report...</div> : (
                 <div className="space-y-8">
-                    {offenders.length === 0 ? <p className="text-center">No red states recorded in this period.</p> :
+                    {offenders.length === 0 ? <p className="text-center">No red states recorded.</p> :
                     offenders.map(([cls, grp, tl, totalSeconds]) => {
                         const key = `${cls}-${grp}-${tl}`;
                         const history = histories[key] || [];
@@ -298,11 +215,8 @@ const TopOffendersReport: React.FC = () => {
                         return (
                             <div key={key} className="p-4 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
                                 <h3 className="font-bold text-lg dark:text-white mb-2">{cls} / {grp} / {tl}</h3>
-                                <div className="text-sm text-red-500 mb-4 flex items-center gap-2">
-                                    <span>Total Red Time:</span>
-                                    <DurationDisplay seconds={totalSeconds} />
-                                </div>
-                                {history.length > 0 ? <StateTimelineChart history={history} domain={domain} /> : <p>No history found for timeline.</p>}
+                                <div className="text-sm text-red-500 mb-4 flex items-center gap-2"><span>Total Red Time:</span><DurationDisplay seconds={totalSeconds} /></div>
+                                {history.length > 0 ? <StateTimelineChart history={history} domain={domain} /> : <p>No history.</p>}
                             </div>
                         )
                     })}
@@ -314,79 +228,83 @@ const TopOffendersReport: React.FC = () => {
 
 const SettingsPage: React.FC = () => {
     const [settings, setSettings] = useState<Partial<AppSettings>>({});
+    const [limits, setLimits] = useState<Partial<SystemLimits>>({});
     const [loading, setLoading] = useState(true);
     const [saved, setSaved] = useState(false);
 
+    const [expiryVal, setExpiryVal] = useState(60);
+    const [expiryUnit, setExpiryUnit] = useState('minutes');
+    const [purpleVal, setPurpleVal] = useState(1440);
+    const [purpleUnit, setPurpleUnit] = useState('minutes');
+    const [purpleAction, setPurpleAction] = useState('yellow');
+    const [yellowVal, setYellowVal] = useState(1440);
+    const [yellowUnit, setYellowUnit] = useState('minutes');
+    const [yellowEnabled, setYellowEnabled] = useState(false);
+    const [historyAgeVal, setHistoryAgeVal] = useState(30);
+    const [historyAgeUnit, setHistoryAgeUnit] = useState('days');
+
     useEffect(() => {
-        getSettings().then(data => {
-            setSettings(data);
+        Promise.all([getSettings(), getSystemConfig()]).then(([data, limitsData]) => {
+            setSettings(data); setLimits(limitsData);
+            if (data.default_expiration_minutes) {
+                if (data.default_expiration_minutes % 1440 === 0) { setExpiryVal(data.default_expiration_minutes / 1440); setExpiryUnit('days'); }
+                else if (data.default_expiration_minutes % 60 === 0) { setExpiryVal(data.default_expiration_minutes / 60); setExpiryUnit('hours'); }
+                else { setExpiryVal(data.default_expiration_minutes); setExpiryUnit('minutes'); }
+            }
+            const pVal = data.purple_to_yellow_minutes < data.purple_to_red_minutes ? data.purple_to_yellow_minutes : data.purple_to_red_minutes;
+            setPurpleAction(data.purple_to_yellow_minutes < data.purple_to_red_minutes ? 'yellow' : 'red');
+            if (pVal > 0) {
+                if (pVal % 1440 === 0) { setPurpleVal(pVal / 1440); setPurpleUnit('days'); }
+                else if (pVal % 60 === 0) { setPurpleVal(pVal / 60); setPurpleUnit('hours'); }
+                else { setPurpleVal(pVal); setPurpleUnit('minutes'); }
+            }
+            if (data.yellow_to_red_minutes > 0) {
+                setYellowEnabled(true);
+                if (data.yellow_to_red_minutes % 1440 === 0) { setYellowVal(data.yellow_to_red_minutes / 1440); setYellowUnit('days'); }
+                else if (data.yellow_to_red_minutes % 60 === 0) { setYellowVal(data.yellow_to_red_minutes / 60); setYellowUnit('hours'); }
+                else { setYellowVal(data.yellow_to_red_minutes); setYellowUnit('minutes'); }
+            }
+            if (data.history_purge_max_days) { setHistoryAgeVal(data.history_purge_max_days); setHistoryAgeUnit('days'); }
             setLoading(false);
         });
     }, []);
 
+    const getMaxExpiry = () => { const m = limits.max_expiration_minutes || 525600; return expiryUnit === 'days' ? Math.floor(m/1440) : (expiryUnit === 'hours' ? Math.floor(m/60) : m); };
+    const getMaxHistoryAge = () => { const m = limits.max_history_days || 366; return historyAgeUnit === 'weeks' ? Math.floor(m/7) : (historyAgeUnit === 'months' ? Math.floor(m/30) : m); };
+
     const handleSave = () => {
-        updateSettings(settings as AppSettings).then(() => {
-            setSaved(true);
-            setTimeout(() => setSaved(false), 2000);
-        }).catch(err => {
-            alert(`Failed to save settings: ${err.message}`);
-        });
-    };
-    
-    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const { name, value } = e.target;
-        setSettings(prev => ({ ...prev, [name]: Number(value) }));
+        const n = { ...settings };
+        let eM = expiryVal; if (expiryUnit === 'hours') eM *= 60; if (expiryUnit === 'days') eM *= 1440; n.default_expiration_minutes = eM;
+        let pM = purpleVal; if (purpleUnit === 'hours') pM *= 60; if (purpleUnit === 'days') pM *= 1440;
+        if (purpleAction === 'yellow') { n.purple_to_yellow_minutes = pM; n.purple_to_red_minutes = Math.max(n.purple_to_red_minutes || 0, pM * 3); }
+        else { n.purple_to_red_minutes = pM; n.purple_to_yellow_minutes = pM; }
+        n.yellow_to_red_minutes = yellowEnabled ? (yellowUnit === 'hours' ? yellowVal * 60 : (yellowUnit === 'days' ? yellowVal * 1440 : yellowVal)) : 0;
+        let hD = historyAgeVal; if (historyAgeUnit === 'weeks') hD *= 7; if (historyAgeUnit === 'months') hD *= 30; n.history_purge_max_days = hD;
+        updateSettings(n as AppSettings).then(() => { setSaved(true); setTimeout(() => setSaved(false), 2000); });
     };
 
     if (loading) return <div className="p-4 pt-16">Loading settings...</div>;
 
     return (
-        <div className="p-4 pt-16">
-            <h1 className="text-2xl font-bold dark:text-white mb-6">Settings</h1>
-            <div className="max-w-2xl space-y-8">
-                <div className="p-4 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
-                    <h3 className="font-semibold text-lg mb-4">History Purging</h3>
-                    <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium dark:text-gray-300">Max Records per Traffic Light</label>
-                            <input type="number" name="history_purge_max_records" value={settings.history_purge_max_records || ''} onChange={handleInputChange} className="mt-1 block w-full border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600"/>
-                            <p className="text-xs text-gray-500 mt-1">Oldest records are deleted when this limit is exceeded.</p>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium dark:text-gray-300">Max History Age (Days)</label>
-                            <input type="number" name="history_purge_max_days" value={settings.history_purge_max_days || ''} onChange={handleInputChange} className="mt-1 block w-full border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600"/>
-                            <p className="text-xs text-gray-500 mt-1">Records older than this will be deleted.</p>
-                        </div>
-                    </div>
-                </div>
-                
-                <div className="p-4 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
-                    <h3 className="font-semibold text-lg mb-4">Expiration & Escalation</h3>
-                    <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium dark:text-gray-300">Default Expiration (Minutes)</label>
-                            <input type="number" name="default_expiration_minutes" value={settings.default_expiration_minutes || ''} onChange={handleInputChange} className="mt-1 block w-full border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600"/>
-                            <p className="text-xs text-gray-500 mt-1">Default expiry for payloads sent without one.</p>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium dark:text-gray-300">Escalate Purple to Yellow (Minutes)</label>
-                            <input type="number" name="purple_to_yellow_minutes" value={settings.purple_to_yellow_minutes || ''} onChange={handleInputChange} className="mt-1 block w-full border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600"/>
-                             <p className="text-xs text-gray-500 mt-1">A 'purple' light will turn 'yellow' after this many minutes.</p>
-                        </div>
-                         <div>
-                            <label className="block text-sm font-medium dark:text-gray-300">Escalate Purple to Red (Minutes)</label>
-                            <input type="number" name="purple_to_red_minutes" value={settings.purple_to_red_minutes || ''} onChange={handleInputChange} className="mt-1 block w-full border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600"/>
-                             <p className="text-xs text-gray-500 mt-1">A 'purple' light will turn 'red' after this many minutes.</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="flex justify-end items-center gap-4">
-                    {saved && <span className="text-green-500 flex items-center gap-1"><CheckCircle size={16} /> Saved!</span>}
-                    <button onClick={handleSave} className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition font-medium">Save Settings</button>
-                </div>
+        <div className="p-4 pt-16"><h1 className="text-2xl font-bold dark:text-white mb-6 flex items-center gap-2"><SettingsIcon /> Settings</h1><div className="max-w-3xl space-y-8">
+            <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
+                <h3 className="font-semibold text-lg mb-2 dark:text-gray-200">Default Expiration</h3>
+                <div className="flex items-center gap-4"><input type="number" min="1" max={getMaxExpiry()} value={expiryVal} onChange={e => setExpiryVal(Number(e.target.value))} className="w-24 border rounded px-3 py-2 dark:bg-gray-700 dark:text-gray-200" /><select value={expiryUnit} onChange={e => setExpiryUnit(e.target.value)} className="border rounded px-3 py-2 dark:bg-gray-700 dark:text-gray-200"><option value="minutes">Minutes</option><option value="hours">Hours</option><option value="days">Days</option></select></div>
             </div>
-        </div>
+            <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
+                <h3 className="font-semibold text-lg mb-2 dark:text-gray-200">Purple Escalation</h3>
+                <div className="flex items-center gap-2"><span className="text-sm dark:text-gray-300">When purple for</span><input type="number" value={purpleVal} onChange={e => setPurpleVal(Number(e.target.value))} className="w-24 border rounded px-3 py-2 dark:bg-gray-700" /><select value={purpleUnit} onChange={e => setPurpleUnit(e.target.value)} className="border rounded px-3 py-2 dark:bg-gray-700"><option value="minutes">Minutes</option><option value="hours">Hours</option><option value="days">Days</option></select><span>change to</span><select value={purpleAction} onChange={e => setPurpleAction(e.target.value)} className="border rounded px-3 py-2 uppercase"><option value="yellow">Yellow</option><option value="red">Red</option></select></div>
+            </div>
+            <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
+                <div className="flex justify-between mb-2"><h3 className="font-semibold text-lg dark:text-gray-200">Yellow Escalation</h3><input type="checkbox" checked={yellowEnabled} onChange={e => setYellowEnabled(e.target.checked)} className="w-5 h-5" /></div>
+                {yellowEnabled && <div className="flex items-center gap-2"><span className="text-sm dark:text-gray-300">When yellow for</span><input type="number" value={yellowVal} onChange={e => setYellowVal(Number(e.target.value))} className="w-24 border rounded px-3 py-2 dark:bg-gray-700" /><select value={yellowUnit} onChange={e => setYellowUnit(e.target.value)} className="border rounded px-3 py-2 dark:bg-gray-700"><option value="minutes">Minutes</option><option value="hours">Hours</option><option value="days">Days</option></select><span>change to Red</span></div>}
+            </div>
+            <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
+                <h3 className="font-semibold text-lg mb-2 dark:text-gray-200">History Retention</h3>
+                <div className="space-y-4"><div className="flex items-center gap-4"><span>Age:</span><input type="number" min="1" max={getMaxHistoryAge()} value={historyAgeVal} onChange={e => setHistoryAgeVal(Number(e.target.value))} className="w-24 border rounded px-3 py-2 dark:bg-gray-700" /><select value={historyAgeUnit} onChange={e => setHistoryAgeUnit(e.target.value)} className="border rounded px-3 py-2 dark:bg-gray-700"><option value="days">Days</option><option value="weeks">Weeks</option><option value="months">Months</option></select></div><div className="flex items-center gap-4"><span>Max records:</span><input type="number" value={settings.history_purge_max_records || 10000} onChange={e => setSettings(p => ({...p, history_purge_max_records: Number(e.target.value)}))} className="w-24 border rounded px-3 py-2 dark:bg-gray-700" /></div></div>
+            </div>
+            <div className="flex justify-end gap-4">{saved && <span className="text-green-500">Saved!</span>}<button onClick={handleSave} className="px-6 py-2 bg-blue-600 text-white rounded">Save Settings</button></div>
+        </div></div>
     );
 };
 
@@ -394,78 +312,21 @@ const IncidentsReport: React.FC = () => {
     const [incidents, setIncidents] = useState<IncidentRecord[]>([]);
     const [hours, setHours] = useState(24);
     const [loading, setLoading] = useState(true);
-
     useEffect(() => {
         setLoading(true);
-        getIncidents(hours).then(data => {
-            setIncidents(data || []);
-            setLoading(false);
-        }).catch(e => {
-            console.error(e);
-            setLoading(false);
-        });
+        getIncidents(hours).then(data => { setIncidents(data || []); setLoading(false); }).catch(() => setLoading(false));
     }, [hours]);
-
     return (
         <div className="p-4 pt-16">
-            <button onClick={() => window.location.hash = '#/'} className="mb-4 text-blue-500 hover:underline">&larr; Back to Dashboard</button>
-            <div className="flex justify-between items-center mb-6">
-                <h1 className="text-2xl font-bold dark:text-white">Incidents Report</h1>
-                <div className="flex items-center">
-                    <span className="mr-2 text-sm text-gray-600 dark:text-gray-400">Time range:</span>
-                    <select value={hours} onChange={e => setHours(Number(e.target.value))} className="border rounded px-2 py-1 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
-                        <option value={1}>Last 1 Hour</option>
-                        <option value={6}>Last 6 Hours</option>
-                        <option value={12}>Last 12 Hours</option>
-                        <option value={24}>Last 24 Hours</option>
-                        <option value={48}>Last 48 Hours</option>
-                        <option value={168}>Last 7 Days</option>
-                    </select>
-                </div>
-            </div>
-
-            {loading ? <div className="text-center py-10 dark:text-gray-300">Loading incidents...</div> : (
-                <div className="overflow-x-auto">
-                    <table className="min-w-full bg-white dark:bg-gray-800 border dark:border-gray-700">
-                        <thead>
-                            <tr className="bg-gray-50 dark:bg-gray-700">
-                                <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Class</th>
-                                <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Group</th>
-                                <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">TL Name</th>
-                                <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Colour</th>
-                                <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Start Time</th>
-                                <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Duration</th>
-                                <th className="py-2 px-4 border-b dark:border-gray-600 text-left dark:text-gray-200">Description</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {incidents.length === 0 ? (
-                                <tr><td colSpan={7} className="py-8 text-center text-gray-500 dark:text-gray-400">No incidents found.</td></tr>
-                            ) : (
-                                incidents.map((incident, i) => (
-                                    <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                                        <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300">{incident.class}</td>
-                                        <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300">{incident.group}</td>
-                                        <td className="py-2 px-4 border-b dark:border-gray-700 font-medium">
-                                            <button onClick={() => window.location.hash = `#/details/${incident.class}/${incident.group}/${incident.tl}`} className="text-blue-600 hover:underline dark:text-blue-400">{incident.tl}</button>
-                                        </td>
-                                        <td className="py-2 px-4 border-b dark:border-gray-700">
-                                            <span className={clsx("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium", {
-                                                "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300": incident.colour === 'yellow',
-                                                "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300": incident.colour === 'red',
-                                            })}>{incident.colour}</span>
-                                        </td>
-                                        <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300">{new Date(incident.start_time).toLocaleString()}</td>
-                                        <td className="py-2 px-4 border-b dark:border-gray-700 dark:text-gray-300">
-                                            <DurationDisplay seconds={Math.max(0, incident.duration_seconds)} />
-                                        </td>
-                                        <td className="py-2 px-4 border-b dark:border-gray-700 text-sm text-gray-600 dark:text-gray-400 truncate max-w-xs">{incident.description}</td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
+            <button onClick={() => window.location.hash = '#/'} className="mb-4 text-blue-500 hover:underline">&larr; Back</button>
+            <h1 className="text-2xl font-bold dark:text-white mb-6">Incidents Report</h1>
+            {loading ? <div className="text-center py-10">Loading...</div> : (
+                <div className="overflow-x-auto"><table className="min-w-full bg-white dark:bg-gray-800 border dark:border-gray-700">
+                    <thead className="bg-gray-50 dark:bg-gray-700"><tr><th className="py-2 px-4 text-left">Class</th><th className="py-2 px-4 text-left">Group</th><th className="py-2 px-4 text-left">TL Name</th><th className="py-2 px-4 text-left">Colour</th><th className="py-2 px-4 text-left">Start Time</th><th className="py-2 px-4 text-left">Duration</th><th className="py-2 px-4 text-left">Description</th></tr></thead>
+                    <tbody>{incidents.map((incident, i) => (
+                        <tr key={i} className="border-b dark:border-gray-700"><td className="py-2 px-4">{incident.class}</td><td className="py-2 px-4">{incident.group}</td><td className="py-2 px-4"><button onClick={() => window.location.hash = `#/details/${incident.class}/${incident.group}/${incident.tl}`} className="text-blue-600 hover:underline">{incident.tl}</button></td><td className="py-2 px-4"><span className={clsx("px-2 py-0.5 rounded text-xs", { 'bg-yellow-100 text-yellow-800': incident.colour === 'yellow', 'bg-red-100 text-red-800': incident.colour === 'red' })}>{incident.colour}</span></td><td className="py-2 px-4">{new Date(incident.start_time).toLocaleString()}</td><td className="py-2 px-4"><DurationDisplay seconds={incident.duration_seconds} /></td><td className="py-2 px-4">{incident.description}</td></tr>
+                    ))}</tbody>
+                </table></div>
             )}
         </div>
     );
@@ -476,343 +337,59 @@ const Details: React.FC<{ cls: string, grp: string, tl: string }> = ({ cls, grp,
   const [metrics, setMetrics] = useState<MetricRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [chartDomain, setChartDomain] = useState<[number | 'dataMin', number | 'dataMax']>(['dataMin', 'dataMax']);
-  const [remainingTime, setRemainingTime] = useState<string>('');
-
-  const latestTL = useMemo(() => {
-    if (history.length === 0) return null;
-    return [...history].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
-  }, [history]);
-
-  const uniqueMetricKeys = useMemo(() => {
-      return Array.from(new Set(metrics.map(m => m.key))).sort();
-  }, [metrics]);
-
-  const effectiveDomain = useMemo(() => {
-    if (chartDomain[0] !== 'dataMin' && chartDomain[1] !== 'dataMax') {
-        return { start: chartDomain[0] as number, end: chartDomain[1] as number };
-    }
-    const sourceData = metrics.length > 0 ? metrics : history;
-    if (sourceData.length === 0) return { start: new Date().getTime() - 86400000, end: new Date().getTime() };
-    
-    const timestamps = sourceData.map(d => new Date(d.timestamp).getTime()).filter(t => !isNaN(t));
-    if (timestamps.length === 0) return { start: new Date().getTime() - 86400000, end: new Date().getTime() };
-
-    const max = Math.max(...timestamps);
-    const min = Math.min(...timestamps);
-    
-    return { start: min, end: max };
-  }, [chartDomain, metrics, history]);
-
-  const aggregatedHistory = useMemo(() => {
-    if (history.length === 0) return [];
-    
-    // Sort ascending for processing
-    const sorted = [...history]
-        .filter(h => {
-             const t = new Date(h.timestamp).getTime();
-             return t >= effectiveDomain.start && t <= effectiveDomain.end;
-        })
-        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    
-    const groups: {
-        colour: string;
-        start: string;
-        end: string;
-        count: number;
-        description: string;
-    }[] = [];
-
-    let currentGroup: typeof groups[0] | null = null;
-
-    for (const record of sorted) {
-        if (!currentGroup) {
-            currentGroup = {
-                colour: record.colour,
-                start: record.timestamp,
-                end: record.timestamp,
-                count: 1,
-                description: record.description || ''
-            };
-        } else {
-            if (record.colour === currentGroup.colour) {
-                currentGroup.end = record.timestamp;
-                currentGroup.count++;
-                currentGroup.description = record.description || currentGroup.description; 
-            } else {
-                groups.push(currentGroup);
-                currentGroup = {
-                    colour: record.colour,
-                    start: record.timestamp,
-                    end: record.timestamp,
-                    count: 1,
-                    description: record.description || ''
-                };
-            }
-        }
-    }
-    if (currentGroup) groups.push(currentGroup);
-
-    // Reverse to show newest first
-    return groups.reverse();
-  }, [history, effectiveDomain]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (latestTL?.expires_at) {
-        const expiryTime = new Date(latestTL.expires_at).getTime();
-        const now = new Date().getTime();
-        const remaining = Math.max(0, Math.floor((expiryTime - now) / 1000));
-        setRemainingTime(formatDuration(remaining));
-      } else {
-        setRemainingTime('');
-      }
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [latestTL]);
 
   useEffect(() => {
     let isMounted = true;
     const fetchData = async () => {
-      try {
-        const [h, m] = await Promise.all([getHistory(cls, grp, tl), getMetrics(cls, grp, tl)]);
-        if (!isMounted) return;
-
-        const hist = h || [];
-        const mets = m || [];
-        setHistory(hist);
-        setMetrics(mets);
-
-        if (loading) { 
-            const sourceData = mets.length > 0 ? mets : hist;
-            if (sourceData.length > 0) {
-                const timestamps = sourceData.map(d => new Date(d.timestamp).getTime()).filter(t => !isNaN(t));
-                if (timestamps.length > 0) {
-                    const maxTime = Math.max(...timestamps);
-                    const minTime = Math.min(...timestamps);
-                    const dataSpan = maxTime - minTime;
-                    const oneDay = 24 * 60 * 60 * 1000;
-
-                    if (dataSpan < oneDay) {
-                        setChartDomain(['dataMin', 'dataMax']);
-                    } else {
-                        setChartDomain([maxTime - oneDay, maxTime]);
-                    }
-                }
-            }
-        }
-        setLoading(false);
-      } catch (e) {
-        console.error(e);
-        if (isMounted) setLoading(false);
-      }
+      const [h, m] = await Promise.all([getHistory(cls, grp, tl), getMetrics(cls, grp, tl)]);
+      if (isMounted) { setHistory(h || []); setMetrics(m || []); setLoading(false); }
     };
+    fetchData(); const interval = setInterval(fetchData, 5000);
+    return () => { isMounted = false; clearInterval(interval); };
+  }, [cls, grp, tl]);
 
-    fetchData(); 
-    const interval = setInterval(fetchData, 5000); 
-
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [cls, grp, tl, loading]);
-
-  const handleZoom = (left: number, right: number) => setChartDomain([left, right]);
-
-  const resetZoom = (range: '24h' | '3d' | 'all') => {
-      const sourceData = metrics.length > 0 ? metrics : history;
-      if (sourceData.length === 0) return;
-      
-      const timestamps = sourceData.map(d => new Date(d.timestamp).getTime()).filter(t => !isNaN(t));
-      if (timestamps.length === 0) return;
-
-      const maxTime = Math.max(...timestamps);
-      const minTime = Math.min(...timestamps);
-      const dataSpan = maxTime - minTime;
-
-      if (range === 'all') {
-          setChartDomain(['dataMin', 'dataMax']);
-          return;
-      }
-
-      const rangeMillis = (range === '24h' ? 86400000 : 259200000);
-      
-      if (dataSpan < rangeMillis) {
-          setChartDomain(['dataMin', 'dataMax']);
-      } else {
-          setChartDomain([maxTime - rangeMillis, maxTime]);
-      }
-  };
-  
-  const handleClassClick = () => {
-      setDashboardFilters({ class: cls });
-      window.location.hash = '#/';
-  };
-  const handleGroupClick = () => {
-      setDashboardFilters({ class: cls, group: grp });
-      window.location.hash = '#/';
-  };
-
-  const handleOverride = async (colour: string) => {
-    const message = window.prompt(`Enter reason for setting colour to ${colour}:`);
-    if (message) {
-        try {
-            await overrideColour(cls, grp, tl, colour, message);
-            setLoading(true);
-            const [h, m] = await Promise.all([getHistory(cls, grp, tl), getMetrics(cls, grp, tl)]);
-            setHistory(h || []);
-            setMetrics(m || []);
-            setLoading(false);
-        } catch (error) {
-            console.error("Failed to apply override:", error);
-            alert("Failed to apply override. See console for details.");
-            setLoading(false);
-        }
+  const aggregatedHistory = useMemo(() => {
+    const sorted = [...history].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    const groups: any[] = []; let cur: any = null;
+    for (const r of sorted) {
+        if (!cur || r.colour !== cur.colour) { if (cur) groups.push(cur); cur = { colour: r.colour, start: r.timestamp, end: r.timestamp, count: 1, description: r.description }; }
+        else { cur.end = r.timestamp; cur.count++; cur.description = r.description || cur.description; }
     }
-  };
+    if (cur) groups.push(cur); return groups.reverse();
+  }, [history]);
 
-  if (loading) return <div className="p-4 pt-16 dark:text-gray-200">Loading Details...</div>;
+  if (loading) return <div className="p-4 pt-16">Loading...</div>;
 
   return (
     <div className="p-4">
-      <div className="sticky top-0 z-30 bg-gray-100 dark:bg-gray-900 shadow-sm">
-          {latestTL && (
-              <div className={clsx("w-full p-2 flex justify-center items-center gap-2 text-white font-bold animate-pulse-bg rounded-b-lg", {
-                  'bg-green-500 shadow-[0_5px_15px_-5px_rgba(34,197,94,0.7)]': latestTL.colour === 'green',
-                  'bg-yellow-500 shadow-[0_5px_15px_-5px_rgba(234,179,8,0.7)]': latestTL.colour === 'yellow',
-                  'bg-red-500 shadow-[0_5px_15px_-5px_rgba(239,68,68,0.7)]': latestTL.colour === 'red',
-                  'bg-purple-500 shadow-[0_5px_15px_-5px_rgba(139,92,246,0.7)]': latestTL.colour === 'purple',
-                  'bg-gray-500': !['green', 'yellow', 'red', 'purple'].includes(latestTL.colour),
-              })}>
-                  {latestTL.colour.toUpperCase()} 
-                  {remainingTime && (
-                      <span className="flex items-center gap-1 text-sm font-normal bg-black/20 px-2 py-0.5 rounded">
-                          <Timer size={14} /> expires in {remainingTime}
-                      </span>
-                  )}
-              </div>
-          )}
-          <div className="p-4 border-b dark:border-gray-800">
-              <div className="flex justify-between items-center mb-4">
-                  <button 
-                    onClick={() => window.location.hash = '#/'} 
-                    className="flex items-center px-3 py-1 bg-gray-200 dark:bg-gray-700 text-sm rounded hover:bg-gray-300 dark:hover:bg-gray-600 dark:text-gray-200 transition-colors"
-                  >
-                      &larr; Back
-                  </button>
-                  <div className="flex gap-2">
-                      {['24h', '3d', 'all'].map(r => (
-                          <button key={r} onClick={() => resetZoom(r as any)} className="px-3 py-1 bg-gray-200 dark:bg-gray-700 text-sm rounded hover:bg-gray-300 dark:hover:bg-gray-600 dark:text-gray-200 capitalize">{r === '3d' ? '3 Days' : r}</button>
-                      ))}
-                      <div className="w-4"></div>
-                      <button className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-sm font-medium">Download CSV</button>
-                  </div>
-              </div>
-              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2 mb-4">
-                  <div>
-                     <h1 className="text-2xl font-bold dark:text-white flex items-center gap-2">
-                         <button onClick={handleClassClick} className="hover:underline">{cls}</button>
-                         <span>/</span>
-                         <button onClick={handleGroupClick} className="hover:underline">{grp}</button>
-                         <span>/</span>
-                         <span>{tl}</span>
-                     </h1>
-                  </div>
-                  <div className="text-sm text-gray-600 dark:text-gray-400 font-mono bg-white dark:bg-gray-800 px-2 py-1 rounded border dark:border-gray-700 whitespace-nowrap">
-                      {new Date(effectiveDomain.start).toLocaleString()} - {new Date(effectiveDomain.end).toLocaleString()}
-                  </div>
-              </div>
-
-              <div className="mt-4 pt-3 border-t dark:border-gray-700 flex items-center gap-2">
-                    <span className="text-sm font-medium dark:text-gray-300">Manual Override:</span>
-                    <button onClick={() => handleOverride('green')} className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600">Set Green</button>
-                    <button onClick={() => handleOverride('yellow')} className="px-3 py-1 text-sm bg-yellow-500 text-white rounded hover:bg-yellow-600">Set Yellow</button>
-                    <button onClick={() => handleOverride('red')} className="px-3 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600">Set Red</button>
+      <div className="p-4 mb-6 border-b dark:border-gray-800 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
+          <div className="flex justify-between items-center mb-4">
+              <button onClick={() => window.location.hash = '#/'} className="px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded">&larr; Back</button>
+              <div className="flex gap-2">
+                  {['24h', '3d', 'all'].map(r => (<button key={r} onClick={() => {}} className="px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded text-sm capitalize">{r}</button>))}
               </div>
           </div>
-          {latestTL && (
-            <div className="p-4 border-b dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
-                <h3 className="text-sm font-semibold dark:text-gray-200 mb-2">Metadata</h3>
-                {latestTL.description && <p className="text-sm text-gray-600 dark:text-gray-400 mb-2"><strong>Description:</strong> {latestTL.description}</p>}
-                {latestTL.tags && latestTL.tags.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1">
-                        <strong className="text-sm text-gray-600 dark:text-gray-400">Tags:</strong>
-                        {latestTL.tags.map(tag => (
-                            <span key={tag} className="bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400 text-xs px-2 py-0.5 rounded border dark:border-blue-900/30">
-                              {tag}
-                            </span>
-                        ))}
-                    </div>
-                )}
-            </div>
-          )}
+          <div className="flex flex-col sm:flex-row justify-between gap-4">
+              <h1 className="text-2xl font-bold dark:text-white">{cls} / {grp} / {tl}</h1>
+              <div className="flex items-center gap-2">
+                    <button onClick={() => overrideColour(cls, grp, tl, 'green', 'manual')} className="px-3 py-1 text-xs bg-green-500 text-white rounded">Green</button>
+                    <button onClick={() => overrideColour(cls, grp, tl, 'yellow', 'manual')} className="px-3 py-1 text-xs bg-yellow-500 text-white rounded">Yellow</button>
+                    <button onClick={() => overrideColour(cls, grp, tl, 'red', 'manual')} className="px-3 py-1 text-xs bg-red-500 text-white rounded">Red</button>
+              </div>
+          </div>
       </div>
-      <div className="mt-6 grid grid-cols-1 gap-8">
-        <div className="bg-white dark:bg-gray-800 p-2 rounded shadow-sm border dark:border-gray-700">
-            <StateTimelineChart history={history} domain={[effectiveDomain.start, effectiveDomain.end]} />
+      <div className="space-y-8">
+        <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border dark:border-gray-700">
+            <StateTimelineChart history={history} domain={['dataMin', 'dataMax']} />
         </div>
         <div>
-           <h2 className="text-xl font-semibold mb-4 dark:text-gray-200">Metrics</h2>
-           {uniqueMetricKeys.length > 0 ? uniqueMetricKeys.map(key => (
-                <div key={key} className="mb-6 bg-white dark:bg-gray-800 p-2 rounded shadow-sm border dark:border-gray-700">
-                    <MetricsChart data={metrics} metricKey={key} domain={chartDomain} onZoom={handleZoom} />
-                </div>
-           )) : <p className="dark:text-gray-400">No metrics available.</p>}
-        </div>
-
-        <div>
-            <h2 className="text-xl font-semibold mb-4 dark:text-gray-200">History Records</h2>
-            <div className="bg-white dark:bg-gray-800 rounded shadow-sm border dark:border-gray-700 overflow-hidden">
-                <table className="min-w-full">
-                    <thead>
-                        <tr className="bg-gray-50 dark:bg-gray-700 border-b dark:border-gray-600">
-                            <th className="py-2 px-4 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Colour</th>
-                            <th className="py-2 px-4 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Start Time</th>
-                            <th className="py-2 px-4 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">End Time</th>
-                            <th className="py-2 px-4 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Updates</th>
-                            <th className="py-2 px-4 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Duration</th>
-                             <th className="py-2 px-4 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                        {aggregatedHistory.map((group, i) => (
-                            <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                                <td className="py-2 px-4 whitespace-nowrap">
-                                    <span className={clsx("px-2 py-0.5 rounded text-xs font-medium uppercase", {
-                                        'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300': group.colour === 'green',
-                                        'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300': group.colour === 'yellow',
-                                        'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300': group.colour === 'red',
-                                        'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300': group.colour === 'purple',
-                                        'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300': !['green', 'yellow', 'red', 'purple'].includes(group.colour),
-                                    })}>
-                                        {group.colour}
-                                    </span>
-                                </td>
-                                <td className="py-2 px-4 text-sm text-gray-900 dark:text-gray-300 whitespace-nowrap">
-                                    {new Date(group.start).toLocaleString()}
-                                </td>
-                                <td className="py-2 px-4 text-sm text-gray-900 dark:text-gray-300 whitespace-nowrap">
-                                    {new Date(group.end).toLocaleString()}
-                                </td>
-                                <td className="py-2 px-4 text-sm text-gray-900 dark:text-gray-300 whitespace-nowrap">
-                                    {group.count}
-                                </td>
-                                <td className="py-2 px-4 text-sm text-gray-900 dark:text-gray-300 whitespace-nowrap">
-                                    <DurationDisplay seconds={(new Date(group.end).getTime() - new Date(group.start).getTime()) / 1000} />
-                                </td>
-                                <td className="py-2 px-4 text-sm text-gray-500 dark:text-gray-400">
-                                    {group.description || '-'}
-                                </td>
-                            </tr>
-                        ))}
-                        {aggregatedHistory.length === 0 && (
-                            <tr>
-                                <td colSpan={6} className="py-4 text-center text-gray-500 dark:text-gray-400">No history records found.</td>
-                            </tr>
-                        )}
-                    </tbody>
-                </table>
-            </div>
+            <h2 className="text-xl font-semibold mb-4 dark:text-gray-200">History</h2>
+            <div className="bg-white dark:bg-gray-800 rounded shadow-sm border dark:border-gray-700 overflow-hidden"><table className="min-w-full">
+                <thead className="bg-gray-50 dark:bg-gray-700"><tr><th className="py-2 px-4 text-left">Colour</th><th className="py-2 px-4 text-left">Start</th><th className="py-2 px-4 text-left">End</th><th className="py-2 px-4 text-left">Duration</th><th className="py-2 px-4 text-left">Desc</th></tr></thead>
+                <tbody>{aggregatedHistory.map((g, i) => (
+                    <tr key={i} className="border-b dark:border-gray-700"><td className="py-2 px-4"><span className={clsx("px-2 py-0.5 rounded text-xs uppercase", { 'bg-green-100 text-green-800': g.colour === 'green', 'bg-yellow-100 text-yellow-800': g.colour === 'yellow', 'bg-red-100 text-red-800': g.colour === 'red', 'bg-purple-100 text-purple-800': g.colour === 'purple' })}>{g.colour}</span></td><td className="py-2 px-4 text-sm">{new Date(g.start).toLocaleString()}</td><td className="py-2 px-4 text-sm">{new Date(g.end).toLocaleString()}</td><td className="py-2 px-4 text-sm"><DurationDisplay seconds={(new Date(g.end).getTime() - new Date(g.start).getTime())/1000} /></td><td className="py-2 px-4 text-sm text-gray-500">{g.description}</td></tr>
+                ))}</tbody>
+            </table></div>
         </div>
       </div>
     </div>
@@ -821,21 +398,19 @@ const Details: React.FC<{ cls: string, grp: string, tl: string }> = ({ cls, grp,
 
 const App: React.FC = () => {
   const [route, setRoute] = useState(window.location.hash || '#/');
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    if (localStorage.getItem('theme') === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) return 'dark';
-    return 'light';
-  });
-  
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('theme') as any) || 'dark');
   const [allTls, setAllTls] = useState<TrafficLightState[]>([]);
+  const [filters, setFilters] = useState(() => getInitialFilters());
+
   useEffect(() => {
-      getTrafficLights().then(setAllTls).catch(console.error);
-      const interval = setInterval(() => getTrafficLights().then(setAllTls), 5000);
+      const fetchData = () => getTrafficLights().then(setAllTls).catch(console.error);
+      fetchData(); const interval = setInterval(fetchData, 5000);
       return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
-    if (theme === 'dark') { document.documentElement.classList.add('dark'); localStorage.setItem('theme', 'dark'); } 
-    else { document.documentElement.classList.remove('dark'); localStorage.setItem('theme', 'light'); }
+    if (theme === 'dark') document.documentElement.classList.add('dark'); else document.documentElement.classList.remove('dark');
+    localStorage.setItem('theme', theme);
   }, [theme]);
 
   useEffect(() => {
@@ -844,11 +419,21 @@ const App: React.FC = () => {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
-  const hash = route.startsWith('#') ? route.substring(1) : route;
+  useEffect(() => { sessionStorage.setItem('dashboardFilters', JSON.stringify(filters)); }, [filters]);
 
+  const counts = useMemo(() => {
+      const c = { green: 0, yellow: 0, red: 0, purple: 0 };
+      allTls.forEach(tl => { if (tl.colour in c) c[tl.colour as keyof typeof c]++; });
+      return c;
+  }, [allTls]);
+
+  const handleHomeClick = () => { setFilters({}); window.location.hash = '#/'; };
+  const handleCountClick = (colour: string) => { setFilters({ colour }); window.location.hash = '#/'; };
+  const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light');
+
+  const hash = route.startsWith('#') ? route.substring(1) : route;
   let content;
-  let currentTl = undefined;
+  let currentTl: any = undefined;
 
   if (hash.startsWith('/details/')) {
     const parts = hash.split('/');
@@ -856,26 +441,57 @@ const App: React.FC = () => {
         currentTl = { class: parts[2], group: parts[3], tl: parts[4] };
         content = <Details cls={parts[2]} grp={parts[3]} tl={parts[4]} />;
     }
-  } else if (hash === '/incidents') {
-    content = <IncidentsReport />;
-  } else if (hash === '/reports/top-offenders') {
-    content = <TopOffendersReport />;
-  } else if (hash.startsWith('/settings')) {
-      content = <SettingsPage />;
-  } else {
-    content = <Dashboard />;
-  }
+  } else if (hash === '/incidents') { content = <IncidentsReport />; }
+  else if (hash === '/reports/top-offenders') { content = <TopOffendersReport />; }
+  else if (hash.startsWith('/settings')) { content = <SettingsPage />; }
+  else { content = <Dashboard tls={allTls} loading={allTls.length === 0} filters={filters} setFilters={setFilters} />; }
+
+  const latestTL = currentTl ? allTls.find(t => t.class === currentTl.class && t.group === currentTl.group && t.tl === currentTl.tl) : null;
 
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900 grid grid-cols-[280px_1fr]">
         <Sidebar trafficLights={allTls} currentTl={currentTl} />
-        <main className="overflow-y-auto relative pb-12">
-            <div className="fixed top-4 right-4 z-50">
-                <button onClick={toggleTheme} className="p-2 rounded-full bg-white dark:bg-gray-800 shadow-md border dark:border-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" title="Toggle Theme">
-                    {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
-                </button>
+        <main className="relative h-screen overflow-hidden flex flex-col">
+            {/* Global Fixed Header */}
+            <header className="h-16 bg-white dark:bg-gray-800 border-b dark:border-gray-700 flex items-center justify-between px-4 z-50 shadow-sm flex-shrink-0">
+                <div className="flex-1 flex justify-center">
+                    {latestTL && (
+                        <div className={clsx("py-1.5 px-4 flex items-center gap-2 text-white font-bold rounded-full shadow-md animate-pulse-bg transition-all", {
+                            'bg-green-500 shadow-green-500/40': latestTL.colour === 'green',
+                            'bg-yellow-500 shadow-yellow-500/40': latestTL.colour === 'yellow',
+                            'bg-red-500 shadow-red-500/40': latestTL.colour === 'red',
+                            'bg-purple-500 shadow-purple-500/40': latestTL.colour === 'purple',
+                            'bg-gray-500': !['green', 'yellow', 'red', 'purple'].includes(latestTL.colour),
+                        })}>
+                            <span>{latestTL.colour.toUpperCase()}</span>
+                            {latestTL.expires_at && (
+                                <span className="flex items-center gap-1 text-xs font-normal bg-black/20 px-2 py-0.5 rounded-full">
+                                    <Timer size={12} /> {formatDuration(Math.max(0, Math.floor((new Date(latestTL.expires_at).getTime() - new Date().getTime()) / 1000)))}
+                                </span>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 bg-gray-100 dark:bg-gray-700 px-3 py-1.5 rounded-full text-xs font-semibold select-none border dark:border-gray-600">
+                        <button onClick={() => handleCountClick('green')} className="text-green-600 dark:text-green-400 flex items-center gap-1 hover:bg-gray-200 dark:hover:bg-gray-600 px-1 rounded"><span className="w-2 h-2 bg-green-500 rounded-full"></span>{counts.green}</button>
+                        <span className="text-gray-300 dark:text-gray-500">|</span>
+                        <button onClick={() => handleCountClick('yellow')} className="text-yellow-600 dark:text-yellow-400 flex items-center gap-1 hover:bg-gray-200 dark:hover:bg-gray-600 px-1 rounded"><span className="w-2 h-2 bg-yellow-500 rounded-full"></span>{counts.yellow}</button>
+                        <span className="text-gray-300 dark:text-gray-500">|</span>
+                        <button onClick={() => handleCountClick('red')} className="text-red-600 dark:text-red-400 flex items-center gap-1 hover:bg-gray-200 dark:hover:bg-gray-600 px-1 rounded"><span className="w-2 h-2 bg-red-500 rounded-full"></span>{counts.red}</button>
+                        <span className="text-gray-300 dark:text-gray-500">|</span>
+                        <button onClick={() => handleCountClick('purple')} className="text-purple-600 dark:text-purple-400 flex items-center gap-1 hover:bg-gray-200 dark:hover:bg-gray-600 px-1 rounded"><span className="w-2 h-2 bg-purple-500 rounded-full"></span>{counts.purple}</button>
+                    </div>
+                    <button onClick={handleHomeClick} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors" title="Home"><Home size={20} /></button>
+                    <button onClick={() => window.location.hash = '#/settings'} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors" title="Settings"><SettingsIcon size={20} /></button>
+                    <button onClick={toggleTheme} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors" title="Toggle Theme">{theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}</button>
+                </div>
+            </header>
+
+            <div className="flex-grow overflow-y-auto p-4">
+                {content}
             </div>
-            {content}
         </main>
     </div>
   );

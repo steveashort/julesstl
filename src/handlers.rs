@@ -1,10 +1,16 @@
-use crate::{db, models::{IngestPayload, IncidentRecord, MetricRecord, TrafficLightState}, settings::{AppSettings}, AppState};
+use crate::{db, models::{IngestPayload, IncidentRecord, MetricRecord, TrafficLightState}, settings::{AppSettings}, config::SystemLimits, AppState};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
 };
 use tracing::error;
+
+pub async fn get_system_config(
+    State(app_state): State<AppState>,
+) -> Json<SystemLimits> {
+    Json(app_state.config.as_ref().clone())
+}
 
 pub async fn ingest(
     State(state): State<AppState>,

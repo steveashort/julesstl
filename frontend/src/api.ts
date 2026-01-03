@@ -45,6 +45,13 @@ export interface AppSettings {
   default_expiration_minutes: number;
   purple_to_yellow_minutes: number;
   purple_to_red_minutes: number;
+  yellow_to_red_minutes: number;
+}
+
+export interface SystemLimits {
+  max_expiration_minutes: number;
+  max_history_days: number;
+  max_history_records: number;
 }
 
 export const getTrafficLights = async () => {
@@ -82,6 +89,7 @@ export const overrideColour = async (cls: string, grp: string, tl: string, colou
     timestamp: new Date().toISOString(),
     expires_at: null, 
   };
+  // Ingest is on port 9000
   const ingestUrl = `${window.location.protocol}//${window.location.hostname}:9000/`;
   const response = await fetch(ingestUrl, {
       method: 'POST',
@@ -100,5 +108,10 @@ export const getSettings = async () => {
 
 export const updateSettings = async (settings: AppSettings) => {
     const response = await axios.post<AppSettings>(`${API_BASE}/settings`, settings);
+    return response.data;
+};
+
+export const getSystemConfig = async () => {
+    const response = await axios.get<SystemLimits>(`${API_BASE}/system-config`);
     return response.data;
 };

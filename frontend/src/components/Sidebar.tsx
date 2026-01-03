@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { TrafficLightState } from '../api';
 import { ChevronRight, ChevronDown, Server, Folder, Layers } from 'lucide-react';
 
@@ -11,13 +11,21 @@ const Sidebar: React.FC<Props> = ({ trafficLights, currentTl }) => {
   const [expandedClasses, setExpandedClasses] = useState<Set<string>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
-  // Expand current TL's path by default
-  useState(() => {
+  // Expand current TL's path when it changes or on mount
+  useEffect(() => {
     if (currentTl) {
-      setExpandedClasses(new Set([currentTl.class]));
-      setExpandedGroups(new Set([`${currentTl.class}-${currentTl.group}`]));
+      setExpandedClasses(prev => {
+          const next = new Set(prev);
+          next.add(currentTl.class);
+          return next;
+      });
+      setExpandedGroups(prev => {
+          const next = new Set(prev);
+          next.add(`${currentTl.class}-${currentTl.group}`);
+          return next;
+      });
     }
-  });
+  }, [currentTl?.class, currentTl?.group, currentTl?.tl]);
 
   const groupedTree = useMemo(() => {
     return trafficLights.reduce((acc, tl) => {
@@ -58,9 +66,9 @@ const Sidebar: React.FC<Props> = ({ trafficLights, currentTl }) => {
   }
 
   return (
-    <div className="h-full bg-gray-50 dark:bg-gray-800 border-r dark:border-gray-700 p-2 text-sm text-gray-800 dark:text-gray-200 overflow-y-auto">
+    <div className="h-full bg-gray-50 dark:bg-gray-800 border-r dark:border-gray-700 p-2 text-sm text-gray-800 dark:text-gray-200 overflow-y-auto flex flex-col">
         <a href="#/" className="block font-bold text-lg p-2 mb-2 dark:text-white">Dashboard</a>
-        <nav>
+        <nav className="flex-grow overflow-y-auto">
             <ul>
                 {Object.entries(groupedTree).map(([className, groups]) => (
                     <li key={className}>

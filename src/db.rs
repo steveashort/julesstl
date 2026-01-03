@@ -158,13 +158,15 @@ pub async fn insert_batch(pool: DbPool, payloads: Vec<IngestPayload>, settings_h
 pub async fn run_housekeeping(pool: DbPool, settings_handle: SettingsHandle) -> Result<()> {
     info!("Starting housekeeping run...");
     let settings = { settings_handle.read().unwrap().clone() };
-    let (exp, purple, purge) = tokio::try_join!(
+    let (exp, purple, yellow, purge) = tokio::try_join!(
         check_and_update_expirations(pool.clone(), settings.clone()),
         check_and_escalate_purple(pool.clone(), settings.clone()),
+        check_and_escalate_yellow(pool.clone(), settings.clone()),
         purge_old_history(pool.clone(), settings.clone())
     )?;
     if exp > 0 { info!("Housekeeping: Expired {} traffic lights.", exp); }
     if purple > 0 { info!("Housekeeping: Escalated {} purple traffic lights.", purple); }
+    if yellow > 0 { info!("Housekeeping: Escalated {} yellow traffic lights.", yellow); }
     if purge > 0 { info!("Housekeeping: Purged {} old records.", purge); }
     info!("Housekeeping run finished.");
     Ok(())
@@ -211,13 +213,34 @@ async fn check_and_escalate_purple(pool: DbPool, settings: AppSettings) -> Resul
     }).await?
 }
 
+async fn check_and_escalate_yellow(pool: DbPool, settings: AppSettings) -> Result<usize> {
+     task::spawn_blocking(move || {
+        if settings.yellow_to_red_minutes == 0 { return Ok(0); }
+        let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+        let red_cutoff = chrono::Utc::now() - chrono::Duration::minutes(settings.yellow_to_red_minutes as i64);
+        let mut stmt = conn.prepare(r#"WITH ranked_tls AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY class, group_name, tl ORDER BY timestamp DESC) as rn FROM traffic_lights) SELECT class, group_name, tl, timestamp, tags FROM ranked_tls WHERE rn = 1 AND colour = 'yellow'"#)?;
+        let yellow_tls: Vec<(String, String, String, String, String)> = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?.filter_map(|r| r.ok()).collect();
+        let mut escalation_count = 0;
+        for (class, group, tl, timestamp_str, tags_json) in yellow_tls {
+            if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(&timestamp_str) {
+                let timestamp_utc = timestamp.with_timezone(&chrono::Utc);
+                if timestamp_utc < red_cutoff {
+                    escalation_count += 1;
+                    conn.execute("INSERT INTO traffic_lights (class, group_name, tl, colour, timestamp, expires_at, description, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", params![class, group, tl, "red", chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true).to_string(), None::<String>, "Escalated from Yellow (Automatic Housekeeping)", tags_json])?;
+                }
+            }
+        }
+        Ok(escalation_count)
+    }).await?
+}
+
 async fn purge_old_history(pool: DbPool, settings: AppSettings) -> Result<usize> {
     task::spawn_blocking(move || {
         let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
         let cutoff_date = chrono::Utc::now() - chrono::Duration::days(settings.history_purge_max_days as i64);
         let cutoff_str = cutoff_date.to_rfc3339_opts(chrono::SecondsFormat::Secs, true).to_string();
-        let date_deleted = conn.execute("DELETE FROM traffic_lights WHERE strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%fZ') < ?", params![cutoff_str])?;
-        conn.execute("DELETE FROM metrics WHERE strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%fZ') < ?", params![cutoff_str])?;
+        let date_deleted = conn.execute("DELETE FROM traffic_lights WHERE try_strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ') < ?", params![cutoff_str])?;
+        conn.execute("DELETE FROM metrics WHERE try_strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ') < ?", params![cutoff_str])?;
         let mut stmt = conn.prepare("SELECT class, group_name, tl FROM traffic_lights GROUP BY class, group_name, tl HAVING count(*) > ?")?;
         let tls_to_trim: Vec<(String, String, String)> = stmt.query_map(params![settings.history_purge_max_records], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?.filter_map(|r| r.ok()).collect();
         let mut count_deleted = 0;
@@ -238,7 +261,7 @@ pub async fn get_top_offenders(pool: DbPool, hours: u32) -> Result<Vec<(String, 
     let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Secs, true).to_string();
     task::spawn_blocking(move || {
         let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-        let mut stmt = conn.prepare(r#"WITH state_durations AS (SELECT class, group_name, tl, colour, timestamp, LEAD(timestamp, 1, strftime(now(), '%Y-%m-%dT%H:%M:%S.%fZ')) OVER (PARTITION BY class, group_name, tl ORDER BY timestamp) as next_timestamp FROM traffic_lights WHERE timestamp >= ?), red_durations AS (SELECT class, group_name, tl, epoch_ms(strptime(next_timestamp, '%Y-%m-%dT%H:%M:%S.%fZ')) - epoch_ms(strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%fZ')) as duration_ms FROM state_durations WHERE colour = 'red') SELECT class, group_name, tl, sum(duration_ms) / 1000.0 as total_red_seconds FROM red_durations GROUP BY class, group_name, tl ORDER BY total_red_seconds DESC LIMIT 10;"#)?;
+        let mut stmt = conn.prepare(r#"WITH state_durations AS (SELECT class, group_name, tl, colour, timestamp, LEAD(timestamp, 1, strftime(CAST(now() AS VARCHAR), '%Y-%m-%dT%H:%M:%SZ')) OVER (PARTITION BY class, group_name, tl ORDER BY timestamp) as next_timestamp FROM traffic_lights WHERE timestamp >= ?), red_durations AS (SELECT class, group_name, tl, epoch_ms(try_strptime(next_timestamp, '%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ')) - epoch_ms(try_strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ')) as duration_ms FROM state_durations WHERE colour = 'red') SELECT class, group_name, tl, sum(duration_ms) / 1000.0 as total_red_seconds FROM red_durations GROUP BY class, group_name, tl ORDER BY total_red_seconds DESC LIMIT 10;"#)?;
         let offenders_iter = stmt.query_map(params![cutoff_str], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
         let mut offenders = Vec::new();
         for item in offenders_iter { offenders.push(item?); }

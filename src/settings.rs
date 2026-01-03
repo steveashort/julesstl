@@ -10,6 +10,7 @@ pub struct AppSettings {
     pub default_expiration_minutes: u32,
     pub purple_to_yellow_minutes: u32,
     pub purple_to_red_minutes: u32,
+    pub yellow_to_red_minutes: u32,
 }
 
 impl Default for AppSettings {
@@ -20,6 +21,7 @@ impl Default for AppSettings {
             default_expiration_minutes: 60,
             purple_to_yellow_minutes: 1440, // 1 day
             purple_to_red_minutes: 4320,   // 3 days
+            yellow_to_red_minutes: 1440,   // 1 day
         }
     }
 }

@@ -14,12 +14,14 @@ mod db;
 mod handlers;
 mod models;
 mod settings;
+mod config;
 
 #[derive(Clone)]
 pub struct AppState {
     pool: db::DbPool,
     tx: mpsc::Sender<IngestPayload>,
     settings: settings::SettingsHandle,
+    config: Arc<config::SystemLimits>,
 }
 
 async fn health_check() -> StatusCode {
@@ -40,12 +42,17 @@ async fn main() -> anyhow::Result<()> {
     let settings_handle = Arc::new(RwLock::new(app_settings));
     info!("Settings loaded.");
 
+    info!("Loading system config...");
+    let system_config = Arc::new(config::load_config()?);
+    info!("System config loaded.");
+
     let (tx, mut rx) = mpsc::channel::<IngestPayload>(10_000);
 
     let app_state = AppState {
         pool: pool.clone(),
         tx,
         settings: settings_handle.clone(),
+        config: system_config.clone(),
     };
 
     info!("Spawning background worker for batch processing...");
@@ -96,6 +103,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/reports/incidents", get(handlers::get_incidents))
         .route("/reports/top-offenders", get(handlers::get_top_offenders))
         .route("/settings", get(handlers::get_settings).post(handlers::update_settings))
+        .route("/system-config", get(handlers::get_system_config))
         .with_state(app_state.clone());
 
     let ui_app = Router::new()

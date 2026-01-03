@@ -1,0 +1,5 @@
+{
+  "max_expiration_minutes": 527040,
+  "max_history_days": 366,
+  "max_history_records": 50000
+}
