@@ -293,7 +293,10 @@ const SettingsPage: React.FC = () => {
             </div>
             <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
                 <h3 className="font-semibold text-lg mb-2 dark:text-gray-200">Purple Escalation</h3>
-                <div className="flex items-center gap-2"><span className="text-sm dark:text-gray-300">When purple for</span><input type="number" value={purpleVal} onChange={e => setPurpleVal(Number(e.target.value))} className="w-24 border rounded px-3 py-2 dark:bg-gray-700" /><select value={purpleUnit} onChange={e => setPurpleUnit(e.target.value)} className="border rounded px-3 py-2 dark:bg-gray-700"><option value="minutes">Minutes</option><option value="hours">Hours</option><option value="days">Days</option></select><span>change to</span><select value={purpleAction} onChange={e => setPurpleAction(e.target.value)} className="border rounded px-3 py-2 uppercase"><option value="yellow">Yellow</option><option value="red">Red</option></select></div>
+                <div className="flex items-center gap-2"><span className="text-sm dark:text-gray-300">When purple for</span><input type="number" value={purpleVal} onChange={e => setPurpleVal(Number(e.target.value))} className="w-24 border rounded px-3 py-2 dark:bg-gray-700" /><select value={purpleUnit} onChange={e => setPurpleUnit(e.target.value)} className="border rounded px-3 py-2 dark:bg-gray-700"><option value="minutes">Minutes</option><option value="hours">Hours</option><option value="days">Days</option></select><span>change to</span><select value={purpleAction} onChange={e => setPurpleAction(e.target.value)} className={clsx("border rounded px-3 py-2 text-sm font-medium uppercase", {
+    'bg-yellow-50 text-yellow-800 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300 dark:border-yellow-900/30': purpleAction === 'yellow',
+    'bg-red-50 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-900/30': purpleAction === 'red'
+})}><option value="yellow">Yellow</option><option value="red">Red</option></select></div>
             </div>
             <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
                 <div className="flex justify-between mb-2"><h3 className="font-semibold text-lg dark:text-gray-200">Yellow Escalation</h3><input type="checkbox" checked={yellowEnabled} onChange={e => setYellowEnabled(e.target.checked)} className="w-5 h-5" /></div>
@@ -324,7 +327,12 @@ const IncidentsReport: React.FC = () => {
                 <div className="overflow-x-auto"><table className="min-w-full bg-white dark:bg-gray-800 border dark:border-gray-700">
                     <thead className="bg-gray-50 dark:bg-gray-700"><tr><th className="py-2 px-4 text-left">Class</th><th className="py-2 px-4 text-left">Group</th><th className="py-2 px-4 text-left">TL Name</th><th className="py-2 px-4 text-left">Colour</th><th className="py-2 px-4 text-left">Start Time</th><th className="py-2 px-4 text-left">Duration</th><th className="py-2 px-4 text-left">Description</th></tr></thead>
                     <tbody>{incidents.map((incident, i) => (
-                        <tr key={i} className="border-b dark:border-gray-700"><td className="py-2 px-4">{incident.class}</td><td className="py-2 px-4">{incident.group}</td><td className="py-2 px-4"><button onClick={() => window.location.hash = `#/details/${incident.class}/${incident.group}/${incident.tl}`} className="text-blue-600 hover:underline">{incident.tl}</button></td><td className="py-2 px-4"><span className={clsx("px-2 py-0.5 rounded text-xs", { 'bg-yellow-100 text-yellow-800': incident.colour === 'yellow', 'bg-red-100 text-red-800': incident.colour === 'red' })}>{incident.colour}</span></td><td className="py-2 px-4">{new Date(incident.start_time).toLocaleString()}</td><td className="py-2 px-4"><DurationDisplay seconds={incident.duration_seconds} /></td><td className="py-2 px-4">{incident.description}</td></tr>
+                        <tr key={i} className="border-b dark:border-gray-700"><td className="py-2 px-4">{incident.class}</td><td className="py-2 px-4">{incident.group}</td><td className="py-2 px-4"><button onClick={() => window.location.hash = `#/details/${incident.class}/${incident.group}/${incident.tl}`} className="text-blue-600 hover:underline">{incident.tl}</button></td>                                        <td className="py-2 px-4 border-b dark:border-gray-700">
+                                            <span className={clsx("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white", {
+                                                "bg-yellow-500": incident.colour === 'yellow',
+                                                "bg-red-500": incident.colour === 'red',
+                                            })}>{incident.colour}</span>
+                                        </td><td className="py-2 px-4">{new Date(incident.start_time).toLocaleString()}</td><td className="py-2 px-4"><DurationDisplay seconds={incident.duration_seconds} /></td><td className="py-2 px-4">{incident.description}</td></tr>
                     ))}</tbody>
                 </table></div>
             )}
@@ -358,6 +366,10 @@ const Details: React.FC<{ cls: string, grp: string, tl: string }> = ({ cls, grp,
     if (cur) groups.push(cur); return groups.reverse();
   }, [history]);
 
+  const uniqueMetricKeys = useMemo(() => {
+      return Array.from(new Set(metrics.map(m => m.key))).sort();
+  }, [metrics]);
+
   if (loading) return <div className="p-4 pt-16">Loading...</div>;
 
   return (
@@ -382,14 +394,59 @@ const Details: React.FC<{ cls: string, grp: string, tl: string }> = ({ cls, grp,
         <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border dark:border-gray-700">
             <StateTimelineChart history={history} domain={['dataMin', 'dataMax']} />
         </div>
+        
+        {uniqueMetricKeys.length > 0 && (
+            <div>
+                <h2 className="text-xl font-semibold mb-4 dark:text-gray-200">Metrics</h2>
+                <div className="grid grid-cols-1 gap-6">
+                    {uniqueMetricKeys.map(key => (
+                        <div key={key} className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border dark:border-gray-700">
+                            <MetricsChart data={metrics} metricKey={key} domain={['dataMin', 'dataMax']} onZoom={() => {}} />
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )}
+
         <div>
             <h2 className="text-xl font-semibold mb-4 dark:text-gray-200">History</h2>
-            <div className="bg-white dark:bg-gray-800 rounded shadow-sm border dark:border-gray-700 overflow-hidden"><table className="min-w-full">
-                <thead className="bg-gray-50 dark:bg-gray-700"><tr><th className="py-2 px-4 text-left">Colour</th><th className="py-2 px-4 text-left">Start</th><th className="py-2 px-4 text-left">End</th><th className="py-2 px-4 text-left">Duration</th><th className="py-2 px-4 text-left">Desc</th></tr></thead>
-                <tbody>{aggregatedHistory.map((g, i) => (
-                    <tr key={i} className="border-b dark:border-gray-700"><td className="py-2 px-4"><span className={clsx("px-2 py-0.5 rounded text-xs uppercase", { 'bg-green-100 text-green-800': g.colour === 'green', 'bg-yellow-100 text-yellow-800': g.colour === 'yellow', 'bg-red-100 text-red-800': g.colour === 'red', 'bg-purple-100 text-purple-800': g.colour === 'purple' })}>{g.colour}</span></td><td className="py-2 px-4 text-sm">{new Date(g.start).toLocaleString()}</td><td className="py-2 px-4 text-sm">{new Date(g.end).toLocaleString()}</td><td className="py-2 px-4 text-sm"><DurationDisplay seconds={(new Date(g.end).getTime() - new Date(g.start).getTime())/1000} /></td><td className="py-2 px-4 text-sm text-gray-500">{g.description}</td></tr>
-                ))}</tbody>
-            </table></div>
+            <div className="bg-white dark:bg-gray-800 rounded shadow-sm border dark:border-gray-700 overflow-hidden">
+                <table className="min-w-full">
+                    <thead className="bg-gray-50 dark:bg-gray-700">
+                        <tr>
+                            <th className="py-3 px-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">State</th>
+                            <th className="py-3 px-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Duration</th>
+                            <th className="py-3 px-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Start Time</th>
+                            <th className="py-3 px-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Description</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                        {aggregatedHistory.map((g, i) => (
+                            <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                                <td className="py-3 px-4">
+                                    <span className={clsx("px-2.5 py-1 rounded text-xs uppercase font-bold text-white shadow-sm", { 
+                                        'bg-green-500': g.colour === 'green', 
+                                        'bg-yellow-500': g.colour === 'yellow', 
+                                        'bg-red-500': g.colour === 'red', 
+                                        'bg-purple-500': g.colour === 'purple',
+                                        'bg-gray-500': !['green', 'yellow', 'red', 'purple'].includes(g.colour)
+                                    })}>{g.colour}</span>
+                                    {g.count > 1 && <span className="ml-2 text-xs font-semibold text-gray-400 dark:text-gray-500">x{g.count}</span>}
+                                </td>
+                                <td className="py-3 px-4 font-mono text-sm text-gray-900 dark:text-gray-100 font-medium">
+                                    <DurationDisplay seconds={(new Date(g.end).getTime() - new Date(g.start).getTime())/1000} />
+                                </td>
+                                <td className="py-3 px-4 text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                                    {new Date(g.start).toLocaleString()}
+                                </td>
+                                <td className="py-3 px-4 text-gray-600 dark:text-gray-400 italic">
+                                    {g.description || '-'}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
         </div>
       </div>
     </div>

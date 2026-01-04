@@ -12,3 +12,12 @@ traffic_lights.db.wal
 server.log
 server_debug.log
 check_db.py
+server_v2.log
+server_v3.log
+server_v4.log
+server_v5.log
+server_v6.log
+server_v7.log
+server_v8.log
+server_v9.log
+server.log

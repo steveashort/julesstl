@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceArea } from 'recharts';
 import { MetricRecord } from '../api';
 
@@ -13,152 +13,92 @@ const MetricsChart: React.FC<Props> = ({ data, metricKey, domain, onZoom }) => {
   const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null);
   const [refAreaRight, setRefAreaRight] = useState<number | null>(null);
 
-  const filteredData = React.useMemo(() => data
+  const filteredData = useMemo(() => data
     .filter(d => d.key === metricKey && d.metric_type === 'gauge')
     .map(d => ({
         ...d,
+        value: Number(d.value),
         timeNum: new Date(d.timestamp).getTime()
-    })), [data, metricKey]);
+    }))
+    .filter(d => !isNaN(d.value) && !isNaN(d.timeNum)), [data, metricKey]);
+
+  const thresholds = useMemo(() => {
+    if (filteredData.length === 0) return { greenMax: 0, yellowMax: 0 };
+    const last = [...filteredData].reverse().find(d => (d.green_if?.length || 0) > 0 || (d.yellow_if?.length || 0) > 0);
+    
+    const parse = (rules: string[] = []) => {
+        let max = 0;
+        for (const r of rules) {
+            if (r.includes(':')) {
+                const val = parseFloat(r.split(':')[1]);
+                if (!isNaN(val) && val > max) max = val;
+            }
+        }
+        return max;
+    };
+
+    return {
+        greenMax: parse(last?.green_if),
+        yellowMax: parse(last?.yellow_if)
+    };
+  }, [filteredData]);
 
   if (filteredData.length === 0) return null;
 
-  const zoom = () => {
-    if (refAreaLeft === refAreaRight || refAreaRight === null || refAreaLeft === null) {
-      setRefAreaLeft(null);
-      setRefAreaRight(null);
-      return;
-    }
-
-    let newLeft = refAreaLeft;
-    let newRight = refAreaRight;
-    if (newLeft > newRight) [newLeft, newRight] = [newRight, newLeft];
-
-    setRefAreaLeft(null);
-    setRefAreaRight(null);
-    
-    onZoom(newLeft, newRight);
-  };
-
-  // Determine thresholds/zones
-  const lastRecord = [...filteredData].reverse().find(d => (d.green_if && d.green_if.length > 0) || (d.yellow_if && d.yellow_if.length > 0));
-  const greenRules = lastRecord?.green_if || [];
-  const yellowRules = lastRecord?.yellow_if || [];
-
-  const parseRanges = (rules: string[]) => {
-      return rules.filter(r => r.includes(':')).map(r => {
-          const [min, max] = r.split(':').map(Number);
-          return { min, max };
-      }).filter(r => !isNaN(r.min) && !isNaN(r.max));
-  };
-
-  const greenZones = parseRanges(greenRules);
-  const yellowZones = parseRanges(yellowRules);
-
-  let overallMin = Number.MAX_VALUE;
-  let overallMax = Number.MIN_VALUE;
-  [...greenZones, ...yellowZones].forEach(z => {
-      if (z.min < overallMin) overallMin = z.min;
-      if (z.max > overallMax) overallMax = z.max;
-  });
-
-  const redZones = [];
-  if (overallMin !== Number.MAX_VALUE) {
-      // Bottom Red Zone: 10% below min (or 0 if negative logic applies, but assume generic)
-      // If min is 0, then -0.1? Gauge usually >= 0? Assuming positive.
-      // If min is 0, we can't show 10% below 0 easily if domain is clamped.
-      // But let's follow instruction: 10% less than min.
-      // If min is 0, 10% of 0 is 0.
-      // If ranges are 0:65. Min is 0. 
-      // If user wants to see "Red" outside, and 0 is bound, then maybe only Top Red Zone matters for 0-start.
-      // But mathematically:
-      redZones.push({ min: overallMin - (overallMin * 0.1), max: overallMin });
-      // Top Red Zone: 10% above max
-      redZones.push({ min: overallMax, max: overallMax + (overallMax * 0.1) });
-  }
-
-  // Check time span
   const currentMin = typeof domain[0] === 'number' ? domain[0] : Math.min(...filteredData.map(d => d.timeNum));
   const currentMax = typeof domain[1] === 'number' ? domain[1] : Math.max(...filteredData.map(d => d.timeNum));
-  const isMultiDay = (currentMax - currentMin) > 86400000;
-
-  // Calculate yMax
   const visibleData = filteredData.filter(d => d.timeNum >= currentMin && d.timeNum <= currentMax);
-  const visibleMax = visibleData.length > 0 ? Math.max(...visibleData.map(d => d.value)) : 0;
-
-  let yMax = visibleMax;
-  // Ensure we see the Red Zones (at least the top one)
-  if (redZones.length > 0) {
-      yMax = Math.max(yMax, redZones[1].max);
-  } else {
-      yMax = yMax * 1.1;
-  }
+  const dataMax = visibleData.length > 0 ? Math.max(...visibleData.map(d => d.value)) : 0;
   
-  if (yMax === 0) yMax = 10;
+  let yMax = Math.max(dataMax, thresholds.yellowMax * 1.1);
+  if (yMax <= 0) yMax = 100;
 
-  const yTicks = Array.from({ length: 6 }, (_, i) => parseFloat((yMax * (i / 5)).toFixed(2)));
+  const greenStop = (thresholds.greenMax / yMax) * 100;
+  const yellowStop = (thresholds.yellowMax / yMax) * 100;
 
-  const formatXAxis = (timeNum: number) => {
-    const date = new Date(timeNum);
-    if (isMultiDay) {
-        return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const zoom = () => {
+    if (refAreaLeft === refAreaRight || refAreaRight === null || refAreaLeft === null) {
+      setRefAreaLeft(null); setRefAreaRight(null);
+      return;
     }
-    return date.toLocaleTimeString();
+    let [l, r] = [refAreaLeft, refAreaRight];
+    if (l > r) [l, r] = [r, l];
+    setRefAreaLeft(null); setRefAreaRight(null);
+    onZoom(l, r);
   };
 
+  const isMultiDay = (currentMax - currentMin) > 86400000;
+  const formatXAxis = (time: number) => {
+    const d = new Date(time);
+    return isMultiDay ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : d.toLocaleTimeString();
+  };
+
+  const gradientId = `grad-${metricKey.replace(/[^a-zA-Z0-9]/g, '-')}`;
+
   return (
-    <div className="h-80 w-full relative select-none">
-      <h4 className="text-center font-semibold mb-2 dark:text-gray-200">{metricKey}</h4>
-      
+    <div className="h-64 w-full select-none">
+      <h4 className="text-center text-sm font-bold mb-2 dark:text-gray-300 uppercase tracking-wider">{metricKey}</h4>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart 
-            data={filteredData} 
-            margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+        <LineChart data={filteredData} margin={{ top: 5, right: 20, left: -20, bottom: 5 }}
             onMouseDown={(e) => e && setRefAreaLeft(Number(e.activeLabel))}
             onMouseMove={(e) => refAreaLeft && e && setRefAreaRight(Number(e.activeLabel))}
-            onMouseUp={zoom}
-        >
-          <CartesianGrid strokeDasharray="3 3" stroke="#ccc" strokeOpacity={0.3} />
-          <XAxis
-            allowDataOverflow
-            dataKey="timeNum"
-            type="number"
-            domain={[currentMin, currentMax]}
-            tickFormatter={formatXAxis}
-            minTickGap={30}
-            stroke="#888"
-          />
-          <YAxis 
-            allowDataOverflow 
-            domain={[0, yMax]} 
-            stroke="#888" 
-            ticks={yTicks}
-            minTickGap={20}
-          />
-          <Tooltip 
-            labelFormatter={(label) => new Date(label).toLocaleString()} 
-            contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.9)', borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
-          />
-          <Legend />
-          
-          {/* Green Zones */}
-          {greenZones.map((z, i) => (
-             <ReferenceArea key={`g-${i}`} y1={z.min} y2={z.max} fill="rgba(34, 197, 94, 0.2)" stroke="none" />
-          ))}
-          {/* Yellow Zones */}
-          {yellowZones.map((z, i) => (
-             <ReferenceArea key={`y-${i}`} y1={z.min} y2={z.max} fill="rgba(234, 179, 8, 0.3)" stroke="none" />
-          ))}
-          {/* Red Zones */}
-          {redZones.map((z, i) => (
-             <ReferenceArea key={`r-${i}`} y1={z.min} y2={z.max} fill="rgba(239, 68, 68, 0.2)" stroke="none" />
-          ))}
-
-          {/* Selection Box */}
-          {refAreaLeft && refAreaRight ? (
-            <ReferenceArea x1={refAreaLeft} x2={refAreaRight} strokeOpacity={0.3} fill="rgba(136, 132, 216, 0.3)" />
-          ) : null}
-
-          <Line type="monotone" dataKey="value" stroke="#6366f1" activeDot={{ r: 6 }} dot={false} strokeWidth={2} />
+            onMouseUp={zoom}>
+          <defs>
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#ef4444" />
+              <stop offset={`${Math.max(0, 100 - yellowStop)}%`} stopColor="#ef4444" />
+              <stop offset={`${Math.max(0, 100 - yellowStop)}%`} stopColor="#eab308" />
+              <stop offset={`${Math.max(0, 100 - greenStop)}%`} stopColor="#eab308" />
+              <stop offset={`${Math.max(0, 100 - greenStop)}%`} stopColor="#22c55e" />
+              <stop offset="100%" stopColor="#22c55e" />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.1} />
+          <XAxis dataKey="timeNum" type="number" domain={[currentMin, currentMax]} tickFormatter={formatXAxis} hide />
+          <YAxis domain={[0, yMax]} width={40} tick={{fontSize: 10}} />
+          <Tooltip labelFormatter={(t) => new Date(t).toLocaleString()} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
+          <Line type="linear" dataKey="value" stroke={`url(#${gradientId})`} strokeWidth={3} dot={false} activeDot={{ r: 4 }} animationDuration={300} />
+          {refAreaLeft && refAreaRight && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} fillOpacity={0.1} fill="#6366f1" />}
         </LineChart>
       </ResponsiveContainer>
     </div>

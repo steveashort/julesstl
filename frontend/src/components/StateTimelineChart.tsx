@@ -13,7 +13,7 @@ const StateTimelineChart: React.FC<Props> = ({ history, domain }) => {
     green: '#22c55e', // green-500
     yellow: '#eab308',// yellow-500
     red: '#ef4444',  // red-500
-    purple: '#8b5cf6',// purple-500
+    purple: '#a855f7',// purple-500
     gray: '#6b7280',  // gray-500
   };
 

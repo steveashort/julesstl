@@ -6,41 +6,15 @@ use std::sync::{Arc, Mutex};
 use tokio::task;
 use tracing::info;
 
-#[derive(Clone, Debug)]
-pub struct DuckdbConnectionManager {
-    master: Arc<Mutex<Connection>>,
-}
-
-impl r2d2::ManageConnection for DuckdbConnectionManager {
-    type Connection = Connection;
-    type Error = duckdb::Error;
-    fn connect(&self) -> Result<Connection, duckdb::Error> {
-        let guard = self.master.lock().unwrap();
-        guard.try_clone()
-    }
-    fn is_valid(&self, conn: &mut Connection) -> Result<(), duckdb::Error> {
-        conn.execute("SELECT 1", [])?;
-        Ok(())
-    }
-    fn has_broken(&self, _conn: &mut Connection) -> bool {
-        false
-    }
-}
-
-pub type DbPool = Arc<r2d2::Pool<DuckdbConnectionManager>>;
+pub type DbPool = Arc<Mutex<Connection>>;
 
 pub fn init_pool() -> Result<DbPool> {
-    let path = "traffic_lights.db";
-    let conn = Connection::open(path)?;
-    let master = Arc::new(Mutex::new(conn));
-    let manager = DuckdbConnectionManager {
-        master: master.clone(),
-    };
-    let pool = r2d2::Pool::builder()
-        .max_size(8)
-        .build(manager)
-        .map_err(|e| anyhow::anyhow!(e))?;
-    let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+    let path = "traffic_lights.db".to_string(); 
+    
+    info!("Initializing connection to {}...", path);
+    let conn = Connection::open(&path)?;
+    
+    info!("Initializing schema...");
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS traffic_lights (
@@ -69,7 +43,9 @@ pub fn init_pool() -> Result<DbPool> {
         );
         "#,
     )?;
-    Ok(Arc::new(pool))
+    info!("Schema initialized.");
+
+    Ok(Arc::new(Mutex::new(conn)))
 }
 
 fn check_matches(val_str: Option<&str>, val_num: Option<f64>, rules: Option<&Vec<String>>) -> bool {
@@ -124,7 +100,7 @@ fn infer_colour(payload: &IngestPayload) -> String {
 pub async fn insert_batch(pool: DbPool, payloads: Vec<IngestPayload>, settings_handle: SettingsHandle) -> Result<()> {
     task::spawn_blocking(move || {
         info!("DB worker processing batch of {} payloads.", payloads.len());
-        let mut conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+        let mut conn = pool.lock().map_err(|e| anyhow::anyhow!("Mutex lock failed: {}", e))?;
         let tx = conn.transaction()?;
         for mut payload in payloads {
             let final_colour = if payload.colour == "inferred" { infer_colour(&payload) } else { payload.colour.clone() };
@@ -174,7 +150,7 @@ pub async fn run_housekeeping(pool: DbPool, settings_handle: SettingsHandle) -> 
 
 async fn check_and_update_expirations(pool: DbPool, _settings: AppSettings) -> Result<usize> {
     task::spawn_blocking(move || {
-        let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+        let conn = pool.lock().map_err(|e| anyhow::anyhow!("Mutex lock failed: {}", e))?;
         let mut stmt = conn.prepare(r#"WITH ranked_tls AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY class, group_name, tl ORDER BY timestamp DESC) as rn FROM traffic_lights) SELECT class, group_name, tl, expires_at, tags FROM ranked_tls WHERE rn = 1 AND colour != 'purple' AND expires_at IS NOT NULL"#)?;
         let tls_to_update: Vec<(String, String, String, String, String)> = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?.filter_map(|r| r.ok()).collect();
         let now = chrono::Utc::now();
@@ -193,7 +169,7 @@ async fn check_and_update_expirations(pool: DbPool, _settings: AppSettings) -> R
 
 async fn check_and_escalate_purple(pool: DbPool, settings: AppSettings) -> Result<usize> {
      task::spawn_blocking(move || {
-        let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+        let conn = pool.lock().map_err(|e| anyhow::anyhow!("Mutex lock failed: {}", e))?;
         let yellow_cutoff = chrono::Utc::now() - chrono::Duration::minutes(settings.purple_to_yellow_minutes as i64);
         let red_cutoff = chrono::Utc::now() - chrono::Duration::minutes(settings.purple_to_red_minutes as i64);
         let mut stmt = conn.prepare(r#"WITH ranked_tls AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY class, group_name, tl ORDER BY timestamp DESC) as rn FROM traffic_lights) SELECT class, group_name, tl, timestamp, tags FROM ranked_tls WHERE rn = 1 AND colour = 'purple'"#)?;
@@ -216,7 +192,7 @@ async fn check_and_escalate_purple(pool: DbPool, settings: AppSettings) -> Resul
 async fn check_and_escalate_yellow(pool: DbPool, settings: AppSettings) -> Result<usize> {
      task::spawn_blocking(move || {
         if settings.yellow_to_red_minutes == 0 { return Ok(0); }
-        let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+        let conn = pool.lock().map_err(|e| anyhow::anyhow!("Mutex lock failed: {}", e))?;
         let red_cutoff = chrono::Utc::now() - chrono::Duration::minutes(settings.yellow_to_red_minutes as i64);
         let mut stmt = conn.prepare(r#"WITH ranked_tls AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY class, group_name, tl ORDER BY timestamp DESC) as rn FROM traffic_lights) SELECT class, group_name, tl, timestamp, tags FROM ranked_tls WHERE rn = 1 AND colour = 'yellow'"#)?;
         let yellow_tls: Vec<(String, String, String, String, String)> = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?.filter_map(|r| r.ok()).collect();
@@ -236,11 +212,11 @@ async fn check_and_escalate_yellow(pool: DbPool, settings: AppSettings) -> Resul
 
 async fn purge_old_history(pool: DbPool, settings: AppSettings) -> Result<usize> {
     task::spawn_blocking(move || {
-        let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+        let conn = pool.lock().map_err(|e| anyhow::anyhow!("Mutex lock failed: {}", e))?;
         let cutoff_date = chrono::Utc::now() - chrono::Duration::days(settings.history_purge_max_days as i64);
         let cutoff_str = cutoff_date.to_rfc3339_opts(chrono::SecondsFormat::Secs, true).to_string();
-        let date_deleted = conn.execute("DELETE FROM traffic_lights WHERE try_strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ') < ?", params![cutoff_str])?;
-        conn.execute("DELETE FROM metrics WHERE try_strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ') < ?", params![cutoff_str])?;
+        let date_deleted = conn.execute("DELETE FROM traffic_lights WHERE try_strptime(timestamp, ['%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ']) < ?", params![cutoff_str])?;
+        conn.execute("DELETE FROM metrics WHERE try_strptime(timestamp, ['%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ']) < ?", params![cutoff_str])?;
         let mut stmt = conn.prepare("SELECT class, group_name, tl FROM traffic_lights GROUP BY class, group_name, tl HAVING count(*) > ?")?;
         let tls_to_trim: Vec<(String, String, String)> = stmt.query_map(params![settings.history_purge_max_records], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?.filter_map(|r| r.ok()).collect();
         let mut count_deleted = 0;
@@ -260,8 +236,8 @@ pub async fn get_top_offenders(pool: DbPool, hours: u32) -> Result<Vec<(String, 
     let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
     let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Secs, true).to_string();
     task::spawn_blocking(move || {
-        let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
-        let mut stmt = conn.prepare(r#"WITH state_durations AS (SELECT class, group_name, tl, colour, timestamp, LEAD(timestamp, 1, strftime(CAST(now() AS VARCHAR), '%Y-%m-%dT%H:%M:%SZ')) OVER (PARTITION BY class, group_name, tl ORDER BY timestamp) as next_timestamp FROM traffic_lights WHERE timestamp >= ?), red_durations AS (SELECT class, group_name, tl, epoch_ms(try_strptime(next_timestamp, '%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ')) - epoch_ms(try_strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ')) as duration_ms FROM state_durations WHERE colour = 'red') SELECT class, group_name, tl, sum(duration_ms) / 1000.0 as total_red_seconds FROM red_durations GROUP BY class, group_name, tl ORDER BY total_red_seconds DESC LIMIT 10;"#)?;
+        let conn = pool.lock().map_err(|e| anyhow::anyhow!("Mutex lock failed: {}", e))?;
+        let mut stmt = conn.prepare(r#"WITH state_durations AS (SELECT class, group_name, tl, colour, timestamp, LEAD(timestamp, 1, strftime(CAST(now() AS TIMESTAMP), '%Y-%m-%dT%H:%M:%SZ')) OVER (PARTITION BY class, group_name, tl ORDER BY timestamp) as next_timestamp FROM traffic_lights WHERE timestamp >= ?), red_durations AS (SELECT class, group_name, tl, epoch_ms(try_strptime(next_timestamp, ['%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ'])) - epoch_ms(try_strptime(timestamp, ['%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ'])) as duration_ms FROM state_durations WHERE colour = 'red') SELECT class, group_name, tl, sum(duration_ms) / 1000.0 as total_red_seconds FROM red_durations GROUP BY class, group_name, tl ORDER BY total_red_seconds DESC LIMIT 10;"#)?;
         let offenders_iter = stmt.query_map(params![cutoff_str], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?;
         let mut offenders = Vec::new();
         for item in offenders_iter { offenders.push(item?); }
@@ -273,7 +249,7 @@ pub async fn get_incidents(pool: DbPool, hours: u32) -> Result<Vec<IncidentRecor
     let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
     let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Secs, true).to_string();
     task::spawn_blocking(move || {
-        let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+        let conn = pool.lock().map_err(|e| anyhow::anyhow!("Mutex lock failed: {}", e))?;
         let mut stmt = conn.prepare(r#"SELECT class, group_name, tl, colour, timestamp, description FROM traffic_lights WHERE timestamp >= ? ORDER BY class, group_name, tl, timestamp ASC"#)?;
         struct RawRow { class: String, group: String, tl: String, colour: String, timestamp: String, description: Option<String> }
         let rows_iter = stmt.query_map(params![cutoff_str], |row| Ok(RawRow { class: row.get(0)?, group: row.get(1)?, tl: row.get(2)?, colour: row.get(3)?, timestamp: row.get(4)?, description: row.get(5)? }))?;
@@ -312,7 +288,7 @@ pub async fn get_incidents(pool: DbPool, hours: u32) -> Result<Vec<IncidentRecor
 
 pub async fn get_current_states(pool: DbPool) -> Result<Vec<TrafficLightState>> {
     task::spawn_blocking(move || {
-        let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+        let conn = pool.lock().map_err(|e| anyhow::anyhow!("Mutex lock failed: {}", e))?;
         let mut stmt = conn.prepare(r#"WITH ranked_tls AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY class, group_name, tl ORDER BY timestamp DESC) as rn FROM traffic_lights) SELECT class, group_name, tl, colour, timestamp, expires_at, description, tags FROM ranked_tls WHERE rn = 1 ORDER BY class, group_name, tl"#)?;
         let tls_iter = stmt.query_map([], |row| {
             let tags_str: String = row.get(7)?;
@@ -327,7 +303,7 @@ pub async fn get_current_states(pool: DbPool) -> Result<Vec<TrafficLightState>> 
 
 pub async fn get_history(pool: DbPool, class: String, group: String, tl: String) -> Result<Vec<TrafficLightState>> {
     task::spawn_blocking(move || {
-        let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+        let conn = pool.lock().map_err(|e| anyhow::anyhow!("Mutex lock failed: {}", e))?;
         let mut stmt = conn.prepare("SELECT class, group_name, tl, colour, timestamp, expires_at, description, tags FROM traffic_lights WHERE class = ? AND group_name = ? AND tl = ? ORDER BY timestamp DESC")?;
         let tls_iter = stmt.query_map(params![class, group, tl], |row| {
             let tags_str: String = row.get(7)?;
@@ -342,7 +318,7 @@ pub async fn get_history(pool: DbPool, class: String, group: String, tl: String)
 
 pub async fn get_metrics(pool: DbPool, class: String, group: String, tl: String) -> Result<Vec<MetricRecord>> {
     task::spawn_blocking(move || {
-        let conn = pool.get().map_err(|e| anyhow::anyhow!(e))?;
+        let conn = pool.lock().map_err(|e| anyhow::anyhow!("Mutex lock failed: {}", e))?;
         let mut stmt = conn.prepare("SELECT class, group_name, tl, timestamp, key, value, value_str, metric_type, unit, green_if, yellow_if FROM metrics WHERE class = ? AND group_name = ? AND tl = ? ORDER BY timestamp ASC")?;
         let metrics_iter = stmt.query_map(params![class, group, tl], |row| {
             let green_if_str: Option<String> = row.get(9)?;

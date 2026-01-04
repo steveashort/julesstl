@@ -7,12 +7,12 @@ interface Props {
 }
 
 const TrafficLightCard: React.FC<Props> = ({ tl }) => {
-  const pillClass = clsx("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize", {
-    'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300': tl.colour === 'green',
-    'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300': tl.colour === 'yellow',
-    'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300': tl.colour === 'red',
-    'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300': tl.colour === 'purple',
-    'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300': !['green', 'yellow', 'red', 'purple'].includes(tl.colour),
+  const pillClass = clsx("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize text-white", {
+    'bg-green-500': tl.colour === 'green',
+    'bg-yellow-500': tl.colour === 'yellow',
+    'bg-red-500': tl.colour === 'red',
+    'bg-purple-500': tl.colour === 'purple',
+    'bg-gray-500': !['green', 'yellow', 'red', 'purple'].includes(tl.colour),
   });
 
   return (
