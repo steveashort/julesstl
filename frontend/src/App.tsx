@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { getTrafficLights, getHistory, getMetrics, getIncidents, overrideColour, getTopOffenders, getSettings, updateSettings, getSystemConfig, TrafficLightState, MetricRecord, IncidentRecord, TopOffender, AppSettings, SystemLimits } from './api';
+import { getMetricColor, inferOverallColor, MetricInference } from './utils/statusUtils';
 import TrafficLightCard from './components/TrafficLightCard';
 import MetricsChart from './components/MetricsChart';
+import EnumMetricDisplay from './components/EnumMetricDisplay';
 import StateTimelineChart from './components/StateTimelineChart';
 import Sidebar from './components/Sidebar';
 import clsx from 'clsx';
@@ -46,130 +48,130 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ tls, loading, filters, setFilters }) => {
-  const {
-    class: selectedClass = '',
-    group: selectedGroup = '',
-    colour: selectedColour = '',
-    tags: selectedTags = [],
-    searchTerm = '',
-  } = filters;
+    const {
+        class: selectedClass = '',
+        group: selectedGroup = '',
+        colour: selectedColour = '',
+        tags: selectedTags = [],
+        searchTerm = '',
+    } = filters;
 
-  const updateFilters = (newFilters: object) => {
-      setFilters((prev: object) => ({ ...prev, ...newFilters }));
-  };
+    const updateFilters = (newFilters: object) => {
+        setFilters((prev: object) => ({ ...prev, ...newFilters }));
+    };
 
-  const classes = useMemo(() => Array.from(new Set(tls.map(tl => tl.class))).sort(), [tls]);
-  const groups = useMemo(() => Array.from(new Set(tls.map(tl => tl.group))).sort(), [tls]);
-  const colours = useMemo(() => Array.from(new Set(tls.map(tl => tl.colour))).sort(), [tls]);
-  const tags = useMemo(() => {
-    const allTags = tls.flatMap(tl => tl.tags || []);
-    return Array.from(new Set(allTags)).sort();
-  }, [tls]);
-  
-  const searchOptions = useMemo(() => {
-      const allTls = tls.map(tl => ({ type: 'TL', value: tl.tl, class: tl.class, group: tl.group }));
-      const allGroups = groups.map(g => ({ type: 'Group', value: g }));
-      const allClasses = classes.map(c => ({ type: 'Class', value: c }));
-      return [...allClasses, ...allGroups, ...allTls];
-  }, [tls, groups, classes]);
+    const classes = useMemo(() => Array.from(new Set(tls.map(tl => tl.class))).sort(), [tls]);
+    const groups = useMemo(() => Array.from(new Set(tls.map(tl => tl.group))).sort(), [tls]);
+    const colours = useMemo(() => Array.from(new Set(tls.map(tl => tl.colour))).sort(), [tls]);
+    const tags = useMemo(() => {
+        const allTags = tls.flatMap(tl => tl.tags || []);
+        return Array.from(new Set(allTags)).sort();
+    }, [tls]);
 
-  const filteredTls = useMemo(() => {
-    return tls.filter(tl => {
-      if (selectedClass && tl.class !== selectedClass) return false;
-      if (selectedGroup && tl.group !== selectedGroup) return false;
-      if (selectedColour && tl.colour !== selectedColour) return false;
-      if (selectedTags.length > 0 && !selectedTags.every((t: string) => (tl.tags || []).includes(t))) return false;
-      if (searchTerm && !`${tl.class} ${tl.group} ${tl.tl}`.toLowerCase().includes(searchTerm.toLowerCase())) return false;
-      return true;
-    });
-  }, [tls, selectedClass, selectedGroup, selectedColour, selectedTags, searchTerm]);
-  
-  const grouped = useMemo(() => {
-    return filteredTls.reduce((acc, tl) => {
-      if (!acc[tl.class]) acc[tl.class] = {};
-      if (!acc[tl.class][tl.group]) acc[tl.class][tl.group] = [];
-      acc[tl.class][tl.group].push(tl);
-      return acc;
-    }, {} as Record<string, Record<string, TrafficLightState[]>>);
-  }, [filteredTls]);
+    const searchOptions = useMemo(() => {
+        const allTls = tls.map(tl => ({ type: 'TL', value: tl.tl, class: tl.class, group: tl.group }));
+        const allGroups = groups.map(g => ({ type: 'Group', value: g }));
+        const allClasses = classes.map(c => ({ type: 'Class', value: c }));
+        return [...allClasses, ...allGroups, ...allTls];
+    }, [tls, groups, classes]);
 
-  const toggleTag = (tag: string) => {
-      const newTags = selectedTags.includes(tag) ? selectedTags.filter((t: string) => t !== tag) : [...selectedTags, tag];
-      updateFilters({ tags: newTags });
-  };
-  
-  const clearFilters = () => setFilters({});
+    const filteredTls = useMemo(() => {
+        return tls.filter(tl => {
+            if (selectedClass && tl.class !== selectedClass) return false;
+            if (selectedGroup && tl.group !== selectedGroup) return false;
+            if (selectedColour && tl.colour !== selectedColour) return false;
+            if (selectedTags.length > 0 && !selectedTags.every((t: string) => (tl.tags || []).includes(t))) return false;
+            if (searchTerm && !`${tl.class} ${tl.group} ${tl.tl}`.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+            return true;
+        });
+    }, [tls, selectedClass, selectedGroup, selectedColour, selectedTags, searchTerm]);
 
-  if (loading) return <div className="p-4 dark:text-gray-200">Loading Dashboard...</div>;
+    const grouped = useMemo(() => {
+        return filteredTls.reduce((acc, tl) => {
+            if (!acc[tl.class]) acc[tl.class] = {};
+            if (!acc[tl.class][tl.group]) acc[tl.class][tl.group] = [];
+            acc[tl.class][tl.group].push(tl);
+            return acc;
+        }, {} as Record<string, Record<string, TrafficLightState[]>>);
+    }, [filteredTls]);
 
-  return (
-    <div className="p-4">
-      <div className="flex flex-col gap-4 mb-6">
-        <div className="flex justify-between items-center">
-             <div className="flex items-center gap-4">
-                <h1 className="text-2xl font-bold dark:text-white">Traffic Light Dashboard</h1>
-                <button onClick={() => window.location.hash = '#/incidents'} className="flex items-center text-red-600 border border-red-600 px-3 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"><AlertTriangle className="w-4 h-4 mr-2" />Incidents</button>
-                <button onClick={() => window.location.hash = '#/reports/top-offenders'} className="flex items-center text-blue-600 border border-blue-600 px-3 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20"><BarChartHorizontal className="w-4 h-4 mr-2" />Top Offenders</button>
-            </div>
-        </div>
+    const toggleTag = (tag: string) => {
+        const newTags = selectedTags.includes(tag) ? selectedTags.filter((t: string) => t !== tag) : [...selectedTags, tag];
+        updateFilters({ tags: newTags });
+    };
 
-        <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg border dark:border-gray-700">
-           <div className="flex flex-wrap gap-2 items-center mb-2">
-              <Filter className="w-5 h-5 text-gray-500 dark:text-gray-400 mr-2" />
-              <div className="relative flex-grow">
-                  <input type="text" placeholder="Search..." value={searchTerm} onChange={e => updateFilters({ searchTerm: e.target.value })} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200 w-full" list="search-options" />
-                   <datalist id="search-options">
-                        {searchOptions.filter(opt => opt.value.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 10).map(opt => (
-                            <option key={`${opt.type}-${opt.value}`} value={opt.value}>{opt.type}: {opt.value}</option>
-                        ))}
-                    </datalist>
-              </div>
-              <select value={selectedClass} onChange={e => updateFilters({ class: e.target.value })} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
-                <option value="">All Classes</option>
-                {classes.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <select value={selectedGroup} onChange={e => updateFilters({ group: e.target.value })} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
-                <option value="">All Groups</option>
-                {groups.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-              <select value={selectedColour} onChange={e => updateFilters({ colour: e.target.value })} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
-                <option value="">All Colours</option>
-                {colours.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-              {(selectedClass || selectedGroup || selectedColour || selectedTags.length > 0 || searchTerm) && (
-                <button onClick={clearFilters} className="text-red-500 text-sm hover:underline ml-2">Clear All</button>
-              )}
-           </div>
-           <div className="flex flex-wrap gap-1 items-center mt-2 border-t dark:border-gray-700 pt-2">
-              <span className="text-xs text-gray-500 mr-2">Tags:</span>
-              {tags.map(t => (
-                  <button key={t} onClick={() => toggleTag(t)} className={clsx("px-2 py-0.5 rounded text-xs border transition-colors", { "bg-blue-600 text-white border-blue-600": selectedTags.includes(t), "bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600": !selectedTags.includes(t) })}>{t}</button>
-              ))}
-           </div>
-        </div>
-      </div>
+    const clearFilters = () => setFilters({});
 
-      <div className="text-sm text-gray-500 dark:text-gray-400 mb-4">Showing {filteredTls.length} of {tls.length} traffic lights</div>
+    if (loading) return <div className="p-4 dark:text-gray-200">Loading Dashboard...</div>;
 
-      {Object.entries(grouped).length === 0 ? <div className="text-center text-gray-500 py-10 dark:text-gray-400">No traffic lights found.</div> : (
-        Object.entries(grouped).map(([cls, classGroups]) => (
-          <div key={cls} className="mb-8">
-            <h2 className="text-xl font-semibold mb-2 dark:text-gray-200">{cls}</h2>
-            {Object.entries(classGroups).map(([grp, items]) => (
-                <div key={grp} className="mb-6 pl-4 border-l-2 border-gray-200 dark:border-gray-700">
-                    <h3 className="text-lg font-medium mb-3 dark:text-gray-300 flex items-center"><span className="bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded text-sm">{grp}</span></h3>
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                    {items.map(tl => (
-                        <div key={`${tl.group}-${tl.tl}`} className="cursor-pointer" onClick={() => window.location.hash = `#/details/${tl.class}/${tl.group}/${tl.tl}`}><TrafficLightCard tl={tl} /></div>
-                    ))}
+    return (
+        <div className="p-4">
+            <div className="flex flex-col gap-4 mb-6">
+                <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-4">
+                        <h1 className="text-2xl font-bold dark:text-white">Traffic Light Dashboard</h1>
+                        <button onClick={() => window.location.hash = '#/incidents'} className="flex items-center text-red-600 border border-red-600 px-3 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"><AlertTriangle className="w-4 h-4 mr-2" />Incidents</button>
+                        <button onClick={() => window.location.hash = '#/reports/top-offenders'} className="flex items-center text-blue-600 border border-blue-600 px-3 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20"><BarChartHorizontal className="w-4 h-4 mr-2" />Top Offenders</button>
                     </div>
                 </div>
-            ))}
-          </div>
-        ))
-      )}
-    </div>
-  );
+
+                <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg border dark:border-gray-700">
+                    <div className="flex flex-wrap gap-2 items-center mb-2">
+                        <Filter className="w-5 h-5 text-gray-500 dark:text-gray-400 mr-2" />
+                        <div className="relative flex-grow">
+                            <input type="text" placeholder="Search..." value={searchTerm} onChange={e => updateFilters({ searchTerm: e.target.value })} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200 w-full" list="search-options" />
+                            <datalist id="search-options">
+                                {searchOptions.filter(opt => opt.value.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 10).map(opt => (
+                                    <option key={`${opt.type}-${opt.value}`} value={opt.value}>{opt.type}: {opt.value}</option>
+                                ))}
+                            </datalist>
+                        </div>
+                        <select value={selectedClass} onChange={e => updateFilters({ class: e.target.value })} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
+                            <option value="">All Classes</option>
+                            {classes.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <select value={selectedGroup} onChange={e => updateFilters({ group: e.target.value })} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
+                            <option value="">All Groups</option>
+                            {groups.map(g => <option key={g} value={g}>{g}</option>)}
+                        </select>
+                        <select value={selectedColour} onChange={e => updateFilters({ colour: e.target.value })} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
+                            <option value="">All Colours</option>
+                            {colours.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        {(selectedClass || selectedGroup || selectedColour || selectedTags.length > 0 || searchTerm) && (
+                            <button onClick={clearFilters} className="text-red-500 text-sm hover:underline ml-2">Clear All</button>
+                        )}
+                    </div>
+                    <div className="flex flex-wrap gap-1 items-center mt-2 border-t dark:border-gray-700 pt-2">
+                        <span className="text-xs text-gray-500 mr-2">Tags:</span>
+                        {tags.map(t => (
+                            <button key={t} onClick={() => toggleTag(t)} className={clsx("px-2 py-0.5 rounded text-xs border transition-colors", { "bg-blue-600 text-white border-blue-600": selectedTags.includes(t), "bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600": !selectedTags.includes(t) })}>{t}</button>
+                        ))}
+                    </div>
+                </div>
+            </div>
+
+            <div className="text-sm text-gray-500 dark:text-gray-400 mb-4">Showing {filteredTls.length} of {tls.length} traffic lights</div>
+
+            {Object.entries(grouped).length === 0 ? <div className="text-center text-gray-500 py-10 dark:text-gray-400">No traffic lights found.</div> : (
+                Object.entries(grouped).map(([cls, classGroups]) => (
+                    <div key={cls} className="mb-8">
+                        <h2 className="text-xl font-semibold mb-2 dark:text-gray-200">{cls}</h2>
+                        {Object.entries(classGroups).map(([grp, items]) => (
+                            <div key={grp} className="mb-6 pl-4 border-l-2 border-gray-200 dark:border-gray-700">
+                                <h3 className="text-lg font-medium mb-3 dark:text-gray-300 flex items-center"><span className="bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded text-sm">{grp}</span></h3>
+                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                                    {items.map(tl => (
+                                        <div key={`${tl.group}-${tl.tl}`} className="cursor-pointer" onClick={() => window.location.hash = `#/details/${tl.class}/${tl.group}/${tl.tl}`}><TrafficLightCard tl={tl} /></div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ))
+            )}
+        </div>
+    );
 };
 
 const TopOffendersReport: React.FC = () => {
@@ -192,7 +194,7 @@ const TopOffendersReport: React.FC = () => {
             });
         }).catch(() => setLoading(false));
     }, [hours]);
-    
+
     return (
         <div className="p-4 pt-16">
             <div className="flex justify-between items-center mb-6">
@@ -200,7 +202,7 @@ const TopOffendersReport: React.FC = () => {
                 <div className="flex items-center gap-4">
                     {[24, 72, 720].map(h => (
                         <button key={h} onClick={() => setHours(h)} className={clsx("px-3 py-1 rounded", { "bg-blue-600 text-white": hours === h, "bg-gray-200 dark:bg-gray-700": hours !== h })}>
-                            {h/24} {h === 24 ? 'Day' : 'Days'}
+                            {h / 24} {h === 24 ? 'Day' : 'Days'}
                         </button>
                     ))}
                 </div>
@@ -208,18 +210,18 @@ const TopOffendersReport: React.FC = () => {
             {loading ? <div className="text-center py-10 dark:text-gray-300">Loading report...</div> : (
                 <div className="space-y-8">
                     {offenders.length === 0 ? <p className="text-center">No red states recorded.</p> :
-                    offenders.map(([cls, grp, tl, totalSeconds]) => {
-                        const key = `${cls}-${grp}-${tl}`;
-                        const history = histories[key] || [];
-                        const domain: [number | 'dataMin', number | 'dataMax'] = history.length > 0 ? [new Date(history[history.length - 1].timestamp).getTime(), new Date(history[0].timestamp).getTime()] : ['dataMin', 'dataMax'];
-                        return (
-                            <div key={key} className="p-4 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
-                                <h3 className="font-bold text-lg dark:text-white mb-2">{cls} / {grp} / {tl}</h3>
-                                <div className="text-sm text-red-500 mb-4 flex items-center gap-2"><span>Total Red Time:</span><DurationDisplay seconds={totalSeconds} /></div>
-                                {history.length > 0 ? <StateTimelineChart history={history} domain={domain} /> : <p>No history.</p>}
-                            </div>
-                        )
-                    })}
+                        offenders.map(([cls, grp, tl, totalSeconds]) => {
+                            const key = `${cls}-${grp}-${tl}`;
+                            const history = histories[key] || [];
+                            const domain: [number | 'dataMin', number | 'dataMax'] = history.length > 0 ? [new Date(history[history.length - 1].timestamp).getTime(), new Date(history[0].timestamp).getTime()] : ['dataMin', 'dataMax'];
+                            return (
+                                <div key={key} className="p-4 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
+                                    <h3 className="font-bold text-lg dark:text-white mb-2">{cls} / {grp} / {tl}</h3>
+                                    <div className="text-sm text-red-500 mb-4 flex items-center gap-2"><span>Total Red Time:</span><DurationDisplay seconds={totalSeconds} /></div>
+                                    {history.length > 0 ? <StateTimelineChart history={history} domain={domain} /> : <p>No history.</p>}
+                                </div>
+                            )
+                        })}
                 </div>
             )}
         </div>
@@ -269,8 +271,8 @@ const SettingsPage: React.FC = () => {
         });
     }, []);
 
-    const getMaxExpiry = () => { const m = limits.max_expiration_minutes || 525600; return expiryUnit === 'days' ? Math.floor(m/1440) : (expiryUnit === 'hours' ? Math.floor(m/60) : m); };
-    const getMaxHistoryAge = () => { const m = limits.max_history_days || 366; return historyAgeUnit === 'weeks' ? Math.floor(m/7) : (historyAgeUnit === 'months' ? Math.floor(m/30) : m); };
+    const getMaxExpiry = () => { const m = limits.max_expiration_minutes || 525600; return expiryUnit === 'days' ? Math.floor(m / 1440) : (expiryUnit === 'hours' ? Math.floor(m / 60) : m); };
+    const getMaxHistoryAge = () => { const m = limits.max_history_days || 366; return historyAgeUnit === 'weeks' ? Math.floor(m / 7) : (historyAgeUnit === 'months' ? Math.floor(m / 30) : m); };
 
     const handleSave = () => {
         const n = { ...settings };
@@ -294,9 +296,9 @@ const SettingsPage: React.FC = () => {
             <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
                 <h3 className="font-semibold text-lg mb-2 dark:text-gray-200">Purple Escalation</h3>
                 <div className="flex items-center gap-2"><span className="text-sm dark:text-gray-300">When purple for</span><input type="number" value={purpleVal} onChange={e => setPurpleVal(Number(e.target.value))} className="w-24 border rounded px-3 py-2 dark:bg-gray-700" /><select value={purpleUnit} onChange={e => setPurpleUnit(e.target.value)} className="border rounded px-3 py-2 dark:bg-gray-700"><option value="minutes">Minutes</option><option value="hours">Hours</option><option value="days">Days</option></select><span>change to</span><select value={purpleAction} onChange={e => setPurpleAction(e.target.value)} className={clsx("border rounded px-3 py-2 text-sm font-medium uppercase", {
-    'bg-yellow-50 text-yellow-800 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300 dark:border-yellow-900/30': purpleAction === 'yellow',
-    'bg-red-50 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-900/30': purpleAction === 'red'
-})}><option value="yellow">Yellow</option><option value="red">Red</option></select></div>
+                    'bg-yellow-50 text-yellow-800 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300 dark:border-yellow-900/30': purpleAction === 'yellow',
+                    'bg-red-50 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-900/30': purpleAction === 'red'
+                })}><option value="yellow">Yellow</option><option value="red">Red</option></select></div>
             </div>
             <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
                 <div className="flex justify-between mb-2"><h3 className="font-semibold text-lg dark:text-gray-200">Yellow Escalation</h3><input type="checkbox" checked={yellowEnabled} onChange={e => setYellowEnabled(e.target.checked)} className="w-5 h-5" /></div>
@@ -304,7 +306,7 @@ const SettingsPage: React.FC = () => {
             </div>
             <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
                 <h3 className="font-semibold text-lg mb-2 dark:text-gray-200">History Retention</h3>
-                <div className="space-y-4"><div className="flex items-center gap-4"><span>Age:</span><input type="number" min="1" max={getMaxHistoryAge()} value={historyAgeVal} onChange={e => setHistoryAgeVal(Number(e.target.value))} className="w-24 border rounded px-3 py-2 dark:bg-gray-700" /><select value={historyAgeUnit} onChange={e => setHistoryAgeUnit(e.target.value)} className="border rounded px-3 py-2 dark:bg-gray-700"><option value="days">Days</option><option value="weeks">Weeks</option><option value="months">Months</option></select></div><div className="flex items-center gap-4"><span>Max records:</span><input type="number" value={settings.history_purge_max_records || 10000} onChange={e => setSettings(p => ({...p, history_purge_max_records: Number(e.target.value)}))} className="w-24 border rounded px-3 py-2 dark:bg-gray-700" /></div></div>
+                <div className="space-y-4"><div className="flex items-center gap-4"><span>Age:</span><input type="number" min="1" max={getMaxHistoryAge()} value={historyAgeVal} onChange={e => setHistoryAgeVal(Number(e.target.value))} className="w-24 border rounded px-3 py-2 dark:bg-gray-700" /><select value={historyAgeUnit} onChange={e => setHistoryAgeUnit(e.target.value)} className="border rounded px-3 py-2 dark:bg-gray-700"><option value="days">Days</option><option value="weeks">Weeks</option><option value="months">Months</option></select></div><div className="flex items-center gap-4"><span>Max records:</span><input type="number" value={settings.history_purge_max_records || 10000} onChange={e => setSettings(p => ({ ...p, history_purge_max_records: Number(e.target.value) }))} className="w-24 border rounded px-3 py-2 dark:bg-gray-700" /></div></div>
             </div>
             <div className="flex justify-end gap-4">{saved && <span className="text-green-500">Saved!</span>}<button onClick={handleSave} className="px-6 py-2 bg-blue-600 text-white rounded">Save Settings</button></div>
         </div></div>
@@ -328,11 +330,11 @@ const IncidentsReport: React.FC = () => {
                     <thead className="bg-gray-50 dark:bg-gray-700"><tr><th className="py-2 px-4 text-left">Class</th><th className="py-2 px-4 text-left">Group</th><th className="py-2 px-4 text-left">TL Name</th><th className="py-2 px-4 text-left">Colour</th><th className="py-2 px-4 text-left">Start Time</th><th className="py-2 px-4 text-left">Duration</th><th className="py-2 px-4 text-left">Description</th></tr></thead>
                     <tbody>{incidents.map((incident, i) => (
                         <tr key={i} className="border-b dark:border-gray-700"><td className="py-2 px-4">{incident.class}</td><td className="py-2 px-4">{incident.group}</td><td className="py-2 px-4"><button onClick={() => window.location.hash = `#/details/${incident.class}/${incident.group}/${incident.tl}`} className="text-blue-600 hover:underline">{incident.tl}</button></td>                                        <td className="py-2 px-4 border-b dark:border-gray-700">
-                                            <span className={clsx("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white", {
-                                                "bg-yellow-500": incident.colour === 'yellow',
-                                                "bg-red-500": incident.colour === 'red',
-                                            })}>{incident.colour}</span>
-                                        </td><td className="py-2 px-4">{new Date(incident.start_time).toLocaleString()}</td><td className="py-2 px-4"><DurationDisplay seconds={incident.duration_seconds} /></td><td className="py-2 px-4">{incident.description}</td></tr>
+                            <span className={clsx("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white", {
+                                "bg-yellow-500": incident.colour === 'yellow',
+                                "bg-red-500": incident.colour === 'red',
+                            })}>{incident.colour}</span>
+                        </td><td className="py-2 px-4">{new Date(incident.start_time).toLocaleString()}</td><td className="py-2 px-4"><DurationDisplay seconds={incident.duration_seconds} /></td><td className="py-2 px-4">{incident.description}</td></tr>
                     ))}</tbody>
                 </table></div>
             )}
@@ -341,217 +343,294 @@ const IncidentsReport: React.FC = () => {
 };
 
 const Details: React.FC<{ cls: string, grp: string, tl: string }> = ({ cls, grp, tl }) => {
-  const [history, setHistory] = useState<TrafficLightState[]>([]);
-  const [metrics, setMetrics] = useState<MetricRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [chartDomain, setChartDomain] = useState<[number | 'dataMin', number | 'dataMax']>(['dataMin', 'dataMax']);
+    const [history, setHistory] = useState<TrafficLightState[]>([]);
+    const [metrics, setMetrics] = useState<MetricRecord[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [chartDomain, setChartDomain] = useState<[number | 'dataMin', number | 'dataMax']>(['dataMin', 'dataMax']);
 
-  useEffect(() => {
-    let isMounted = true;
-    const fetchData = async () => {
-      const [h, m] = await Promise.all([getHistory(cls, grp, tl), getMetrics(cls, grp, tl)]);
-      if (isMounted) { setHistory(h || []); setMetrics(m || []); setLoading(false); }
-    };
-    fetchData(); const interval = setInterval(fetchData, 5000);
-    return () => { isMounted = false; clearInterval(interval); };
-  }, [cls, grp, tl]);
+    useEffect(() => {
+        let isMounted = true;
+        const fetchData = async () => {
+            const [h, m] = await Promise.all([getHistory(cls, grp, tl), getMetrics(cls, grp, tl)]);
+            if (isMounted) { setHistory(h || []); setMetrics(m || []); setLoading(false); }
+        };
+        fetchData(); const interval = setInterval(fetchData, 5000);
+        return () => { isMounted = false; clearInterval(interval); };
+    }, [cls, grp, tl]);
 
-  const aggregatedHistory = useMemo(() => {
-    const sorted = [...history].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    const groups: any[] = []; let cur: any = null;
-    for (const r of sorted) {
-        if (!cur || r.colour !== cur.colour) { if (cur) groups.push(cur); cur = { colour: r.colour, start: r.timestamp, end: r.timestamp, count: 1, description: r.description }; }
-        else { cur.end = r.timestamp; cur.count++; cur.description = r.description || cur.description; }
-    }
-    if (cur) groups.push(cur); return groups.reverse();
-  }, [history]);
+    const aggregatedHistory = useMemo(() => {
+        const sorted = [...history].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        const groups: any[] = []; let cur: any = null;
+        for (const r of sorted) {
+            if (!cur || r.colour !== cur.colour) { if (cur) groups.push(cur); cur = { colour: r.colour, start: r.timestamp, end: r.timestamp, count: 1, description: r.description }; }
+            else { cur.end = r.timestamp; cur.count++; cur.description = r.description || cur.description; }
+        }
+        if (cur) groups.push(cur); return groups.reverse();
+    }, [history]);
 
-  const uniqueMetricKeys = useMemo(() => {
-      return Array.from(new Set(metrics.map(m => m.key))).sort();
-  }, [metrics]);
+    const uniqueMetricKeys = useMemo(() => {
+        return Array.from(new Set(metrics.map(m => m.key))).sort();
+    }, [metrics]);
 
-  if (loading) return <div className="p-4 pt-16">Loading...</div>;
+    const statusInferences = useMemo(() => {
+        const infs: MetricInference[] = [];
+        uniqueMetricKeys.forEach(key => {
+            const latestMetric = [...metrics].filter(m => m.key === key).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+            if (latestMetric) {
+                const color = getMetricColor(latestMetric);
+                infs.push({
+                    key: latestMetric.key,
+                    value: latestMetric.value_str || latestMetric.value,
+                    color: color,
+                    reason: color === 'green' ? 'Matches green_if' : color === 'yellow' ? 'Matches yellow_if' : 'No rule match (Red)'
+                });
+            }
+        });
+        return infs;
+    }, [uniqueMetricKeys, metrics]);
 
-  return (
-    <div className="p-4">
-      <div className="p-4 mb-6 border-b dark:border-gray-800 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
-          <div className="flex justify-between items-center mb-4">
-              <button onClick={() => window.location.hash = '#/'} className="px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded">&larr; Back</button>
-              <div className="flex gap-2">
-                  {['24h', '3d', 'all'].map(r => (<button key={r} onClick={() => {}} className="px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded text-sm capitalize">{r}</button>))}
-              </div>
-          </div>
-          <div className="flex flex-col sm:flex-row justify-between gap-4">
-              <h1 className="text-2xl font-bold dark:text-white">{cls} / {grp} / {tl}</h1>
-              <div className="flex items-center gap-2">
-                    <button onClick={() => overrideColour(cls, grp, tl, 'green', 'manual')} className="px-3 py-1 text-xs bg-green-500 text-white rounded">Green</button>
-                    <button onClick={() => overrideColour(cls, grp, tl, 'yellow', 'manual')} className="px-3 py-1 text-xs bg-yellow-500 text-white rounded">Yellow</button>
-                    <button onClick={() => overrideColour(cls, grp, tl, 'red', 'manual')} className="px-3 py-1 text-xs bg-red-500 text-white rounded">Red</button>
-              </div>
-          </div>
-      </div>
-      <div className="space-y-8">
-        <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border dark:border-gray-700">
-            <StateTimelineChart history={history} domain={['dataMin', 'dataMax']} />
-        </div>
-        
-        {uniqueMetricKeys.length > 0 && (
-            <div>
-                <h2 className="text-xl font-semibold mb-4 dark:text-gray-200">Metrics</h2>
-                <div className="grid grid-cols-1 gap-6">
-                    {uniqueMetricKeys.map(key => (
-                        <div key={key} className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border dark:border-gray-700">
-                            <MetricsChart data={metrics} metricKey={key} domain={['dataMin', 'dataMax']} onZoom={() => {}} />
+    const inferredColor = useMemo(() => inferOverallColor(statusInferences), [statusInferences]);
+
+    if (loading) return <div className="p-4 pt-16">Loading...</div>;
+
+    return (
+        <div className="p-4">
+            <div className="p-4 mb-6 border-b dark:border-gray-800 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
+                <div className="flex justify-between items-center mb-4">
+                    <button onClick={() => window.location.hash = '#/'} className="px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded">&larr; Back</button>
+                    <div className="flex gap-2">
+                        {['24h', '3d', 'all'].map(r => (<button key={r} onClick={() => { }} className="px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded text-sm capitalize">{r}</button>))}
+                    </div>
+                </div>
+                <div className="flex flex-col sm:flex-row justify-between gap-4">
+                    <div className="flex flex-col gap-1">
+                        <h1 className="text-2xl font-bold dark:text-white tracking-tight">{cls} / {grp} / {tl}</h1>
+                        {history[0]?.description && (
+                            <p className="text-lg text-gray-600 dark:text-gray-400 font-medium">{history[0].description}</p>
+                        )}
+                        {history[0]?.tags && history[0].tags.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mt-1">
+                                {history[0].tags.map(t => (
+                                    <span key={t} className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700/50 rounded text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 font-bold border dark:border-gray-600">
+                                        {t}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                        <div className="text-xs text-gray-400 mt-2 flex items-center gap-1">
+                            <Timer size={12} />
+                            <span>Last record: {history[0] ? new Date(history[0].timestamp).toLocaleString() : 'N/A'}</span>
                         </div>
-                    ))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button onClick={() => overrideColour(cls, grp, tl, 'green', 'manual')} className="px-3 py-1 text-xs bg-green-500 text-white rounded">Green</button>
+                        <button onClick={() => overrideColour(cls, grp, tl, 'yellow', 'manual')} className="px-3 py-1 text-xs bg-yellow-500 text-white rounded">Yellow</button>
+                        <button onClick={() => overrideColour(cls, grp, tl, 'red', 'manual')} className="px-3 py-1 text-xs bg-red-500 text-white rounded">Red</button>
+                    </div>
                 </div>
             </div>
-        )}
+            <div className="space-y-8">
+                {statusInferences.length > 0 && (
+                    <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border dark:border-gray-700">
+                        <h2 className="text-lg font-bold mb-3 dark:text-gray-200 flex items-center gap-2">
+                            <BarChartHorizontal size={20} className="text-blue-500" />
+                            Status Inference
+                        </h2>
+                        <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                            <span>Overall status is</span>
+                            <span className={clsx("px-3 py-1 rounded-full font-bold text-white uppercase shadow-sm", {
+                                'bg-green-500': inferredColor === 'green',
+                                'bg-yellow-500': inferredColor === 'yellow',
+                                'bg-red-500': inferredColor === 'red',
+                                'bg-purple-500': inferredColor === 'purple',
+                                'bg-gray-500': inferredColor === 'gray',
+                            })}>
+                                {inferredColor}
+                            </span>
+                            <span>based on metrics:</span>
+                            <div className="flex flex-wrap gap-2 ml-1">
+                                {statusInferences.map(inf => (
+                                    <div key={inf.key} className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-700/50 px-2 py-1 rounded border dark:border-gray-600">
+                                        <span className="font-semibold text-gray-700 dark:text-gray-300">{inf.key}</span>
+                                        <span className={clsx("w-2 h-2 rounded-full", {
+                                            'bg-green-500': inf.color === 'green',
+                                            'bg-yellow-500': inf.color === 'yellow',
+                                            'bg-red-500': inf.color === 'red',
+                                            'bg-gray-400': inf.color === 'gray',
+                                        })}></span>
+                                        <span className="text-xs text-gray-500 dark:text-gray-500 italic">({inf.value})</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
 
-        <div>
-            <h2 className="text-xl font-semibold mb-4 dark:text-gray-200">History</h2>
-            <div className="bg-white dark:bg-gray-800 rounded shadow-sm border dark:border-gray-700 overflow-hidden">
-                <table className="min-w-full">
-                    <thead className="bg-gray-50 dark:bg-gray-700">
-                        <tr>
-                            <th className="py-3 px-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">State</th>
-                            <th className="py-3 px-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Duration</th>
-                            <th className="py-3 px-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Start Time</th>
-                            <th className="py-3 px-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Description</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                        {aggregatedHistory.map((g, i) => (
-                            <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-                                <td className="py-3 px-4">
-                                    <span className={clsx("px-2.5 py-1 rounded text-xs uppercase font-bold text-white shadow-sm", { 
-                                        'bg-green-500': g.colour === 'green', 
-                                        'bg-yellow-500': g.colour === 'yellow', 
-                                        'bg-red-500': g.colour === 'red', 
-                                        'bg-purple-500': g.colour === 'purple',
-                                        'bg-gray-500': !['green', 'yellow', 'red', 'purple'].includes(g.colour)
-                                    })}>{g.colour}</span>
-                                    {g.count > 1 && <span className="ml-2 text-xs font-semibold text-gray-400 dark:text-gray-500">x{g.count}</span>}
-                                </td>
-                                <td className="py-3 px-4 font-mono text-sm text-gray-900 dark:text-gray-100 font-medium">
-                                    <DurationDisplay seconds={(new Date(g.end).getTime() - new Date(g.start).getTime())/1000} />
-                                </td>
-                                <td className="py-3 px-4 text-gray-700 dark:text-gray-300 whitespace-nowrap">
-                                    {new Date(g.start).toLocaleString()}
-                                </td>
-                                <td className="py-3 px-4 text-gray-600 dark:text-gray-400 italic">
-                                    {g.description || '-'}
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
+                <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border dark:border-gray-700">
+                    <StateTimelineChart history={history} domain={['dataMin', 'dataMax']} />
+                </div>
+
+                {uniqueMetricKeys.length > 0 && (
+                    <div>
+                        <h2 className="text-xl font-semibold mb-4 dark:text-gray-200">Metrics</h2>
+                        <div className="grid grid-cols-1 gap-6">
+                            {uniqueMetricKeys.map(key => (
+                                <div key={key} className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border dark:border-gray-700">
+                                    {metrics.find(m => m.key === key)?.metric_type === 'gauge' ? (
+                                        <MetricsChart data={metrics} metricKey={key} domain={['dataMin', 'dataMax']} onZoom={() => { }} />
+                                    ) : (
+                                        <EnumMetricDisplay data={metrics} metricKey={key} />
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                <div>
+                    <h2 className="text-xl font-semibold mb-4 dark:text-gray-200">History</h2>
+                    <div className="bg-white dark:bg-gray-800 rounded shadow-sm border dark:border-gray-700 overflow-hidden">
+                        <table className="min-w-full">
+                            <thead className="bg-gray-50 dark:bg-gray-700">
+                                <tr>
+                                    <th className="py-3 px-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">State</th>
+                                    <th className="py-3 px-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Duration</th>
+                                    <th className="py-3 px-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Start Time</th>
+                                    <th className="py-3 px-4 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Description</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                                {aggregatedHistory.map((g, i) => (
+                                    <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                                        <td className="py-3 px-4">
+                                            <span className={clsx("px-2.5 py-1 rounded text-xs uppercase font-bold text-white shadow-sm", {
+                                                'bg-green-500': g.colour === 'green',
+                                                'bg-yellow-500': g.colour === 'yellow',
+                                                'bg-red-500': g.colour === 'red',
+                                                'bg-purple-500': g.colour === 'purple',
+                                                'bg-gray-500': !['green', 'yellow', 'red', 'purple'].includes(g.colour)
+                                            })}>{g.colour}</span>
+                                            {g.count > 1 && <span className="ml-2 text-xs font-semibold text-gray-400 dark:text-gray-500">x{g.count}</span>}
+                                        </td>
+                                        <td className="py-3 px-4 font-mono text-sm text-gray-900 dark:text-gray-100 font-medium">
+                                            <DurationDisplay seconds={(new Date(g.end).getTime() - new Date(g.start).getTime()) / 1000} />
+                                        </td>
+                                        <td className="py-3 px-4 text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                                            {new Date(g.start).toLocaleString()}
+                                        </td>
+                                        <td className="py-3 px-4 text-gray-600 dark:text-gray-400 italic">
+                                            {g.description || '-'}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
-      </div>
-    </div>
-  );
+    );
 };
 
 const App: React.FC = () => {
-  const [route, setRoute] = useState(window.location.hash || '#/');
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('theme') as any) || 'dark');
-  const [allTls, setAllTls] = useState<TrafficLightState[]>([]);
-  const [filters, setFilters] = useState(() => getInitialFilters());
+    const [route, setRoute] = useState(window.location.hash || '#/');
+    const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('theme') as any) || 'dark');
+    const [allTls, setAllTls] = useState<TrafficLightState[]>([]);
+    const [filters, setFilters] = useState(() => getInitialFilters());
 
-  useEffect(() => {
-      const fetchData = () => getTrafficLights().then(setAllTls).catch(console.error);
-      fetchData(); const interval = setInterval(fetchData, 5000);
-      return () => clearInterval(interval);
-  }, []);
+    useEffect(() => {
+        const fetchData = () => getTrafficLights().then(setAllTls).catch(console.error);
+        fetchData(); const interval = setInterval(fetchData, 5000);
+        return () => clearInterval(interval);
+    }, []);
 
-  useEffect(() => {
-    if (theme === 'dark') document.documentElement.classList.add('dark'); else document.documentElement.classList.remove('dark');
-    localStorage.setItem('theme', theme);
-  }, [theme]);
+    useEffect(() => {
+        if (theme === 'dark') document.documentElement.classList.add('dark'); else document.documentElement.classList.remove('dark');
+        localStorage.setItem('theme', theme);
+    }, [theme]);
 
-  useEffect(() => {
-    const handleHashChange = () => setRoute(window.location.hash);
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
+    useEffect(() => {
+        const handleHashChange = () => setRoute(window.location.hash);
+        window.addEventListener('hashchange', handleHashChange);
+        return () => window.removeEventListener('hashchange', handleHashChange);
+    }, []);
 
-  useEffect(() => { sessionStorage.setItem('dashboardFilters', JSON.stringify(filters)); }, [filters]);
+    useEffect(() => { sessionStorage.setItem('dashboardFilters', JSON.stringify(filters)); }, [filters]);
 
-  const counts = useMemo(() => {
-      const c = { green: 0, yellow: 0, red: 0, purple: 0 };
-      allTls.forEach(tl => { if (tl.colour in c) c[tl.colour as keyof typeof c]++; });
-      return c;
-  }, [allTls]);
+    const counts = useMemo(() => {
+        const c = { green: 0, yellow: 0, red: 0, purple: 0 };
+        allTls.forEach(tl => { if (tl.colour in c) c[tl.colour as keyof typeof c]++; });
+        return c;
+    }, [allTls]);
 
-  const handleHomeClick = () => { setFilters({}); window.location.hash = '#/'; };
-  const handleCountClick = (colour: string) => { setFilters({ colour }); window.location.hash = '#/'; };
-  const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light');
+    const handleHomeClick = () => { setFilters({}); window.location.hash = '#/'; };
+    const handleCountClick = (colour: string) => { setFilters({ colour }); window.location.hash = '#/'; };
+    const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light');
 
-  const hash = route.startsWith('#') ? route.substring(1) : route;
-  let content;
-  let currentTl: any = undefined;
+    const hash = route.startsWith('#') ? route.substring(1) : route;
+    let content;
+    let currentTl: any = undefined;
 
-  if (hash.startsWith('/details/')) {
-    const parts = hash.split('/');
-    if (parts.length >= 5) {
-        currentTl = { class: parts[2], group: parts[3], tl: parts[4] };
-        content = <Details cls={parts[2]} grp={parts[3]} tl={parts[4]} />;
-    }
-  } else if (hash === '/incidents') { content = <IncidentsReport />; }
-  else if (hash === '/reports/top-offenders') { content = <TopOffendersReport />; }
-  else if (hash.startsWith('/settings')) { content = <SettingsPage />; }
-  else { content = <Dashboard tls={allTls} loading={allTls.length === 0} filters={filters} setFilters={setFilters} />; }
+    if (hash.startsWith('/details/')) {
+        const parts = hash.split('/');
+        if (parts.length >= 5) {
+            currentTl = { class: parts[2], group: parts[3], tl: parts[4] };
+            content = <Details cls={parts[2]} grp={parts[3]} tl={parts[4]} />;
+        }
+    } else if (hash === '/incidents') { content = <IncidentsReport />; }
+    else if (hash === '/reports/top-offenders') { content = <TopOffendersReport />; }
+    else if (hash.startsWith('/settings')) { content = <SettingsPage />; }
+    else { content = <Dashboard tls={allTls} loading={allTls.length === 0} filters={filters} setFilters={setFilters} />; }
 
-  const latestTL = currentTl ? allTls.find(t => t.class === currentTl.class && t.group === currentTl.group && t.tl === currentTl.tl) : null;
+    const latestTL = currentTl ? allTls.find(t => t.class === currentTl.class && t.group === currentTl.group && t.tl === currentTl.tl) : null;
 
-  return (
-    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 grid grid-cols-[280px_1fr]">
-        <Sidebar trafficLights={allTls} currentTl={currentTl} />
-        <main className="relative h-screen overflow-hidden flex flex-col">
-            {/* Global Fixed Header */}
-            <header className="h-16 bg-white dark:bg-gray-800 border-b dark:border-gray-700 flex items-center justify-between px-4 z-50 shadow-sm flex-shrink-0">
-                <div className="flex-1 flex justify-center">
-                    {latestTL && (
-                        <div className={clsx("py-1.5 px-4 flex items-center gap-2 text-white font-bold rounded-full shadow-md animate-pulse-bg transition-all", {
-                            'bg-green-500 shadow-green-500/40': latestTL.colour === 'green',
-                            'bg-yellow-500 shadow-yellow-500/40': latestTL.colour === 'yellow',
-                            'bg-red-500 shadow-red-500/40': latestTL.colour === 'red',
-                            'bg-purple-500 shadow-purple-500/40': latestTL.colour === 'purple',
-                            'bg-gray-500': !['green', 'yellow', 'red', 'purple'].includes(latestTL.colour),
-                        })}>
-                            <span>{latestTL.colour.toUpperCase()}</span>
-                            {latestTL.expires_at && (
-                                <span className="flex items-center gap-1 text-xs font-normal bg-black/20 px-2 py-0.5 rounded-full">
-                                    <Timer size={12} /> {formatDuration(Math.max(0, Math.floor((new Date(latestTL.expires_at).getTime() - new Date().getTime()) / 1000)))}
-                                </span>
-                            )}
-                        </div>
-                    )}
-                </div>
-
-                <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2 bg-gray-100 dark:bg-gray-700 px-3 py-1.5 rounded-full text-xs font-semibold select-none border dark:border-gray-600">
-                        <button onClick={() => handleCountClick('green')} className="text-green-600 dark:text-green-400 flex items-center gap-1 hover:bg-gray-200 dark:hover:bg-gray-600 px-1 rounded"><span className="w-2 h-2 bg-green-500 rounded-full"></span>{counts.green}</button>
-                        <span className="text-gray-300 dark:text-gray-500">|</span>
-                        <button onClick={() => handleCountClick('yellow')} className="text-yellow-600 dark:text-yellow-400 flex items-center gap-1 hover:bg-gray-200 dark:hover:bg-gray-600 px-1 rounded"><span className="w-2 h-2 bg-yellow-500 rounded-full"></span>{counts.yellow}</button>
-                        <span className="text-gray-300 dark:text-gray-500">|</span>
-                        <button onClick={() => handleCountClick('red')} className="text-red-600 dark:text-red-400 flex items-center gap-1 hover:bg-gray-200 dark:hover:bg-gray-600 px-1 rounded"><span className="w-2 h-2 bg-red-500 rounded-full"></span>{counts.red}</button>
-                        <span className="text-gray-300 dark:text-gray-500">|</span>
-                        <button onClick={() => handleCountClick('purple')} className="text-purple-600 dark:text-purple-400 flex items-center gap-1 hover:bg-gray-200 dark:hover:bg-gray-600 px-1 rounded"><span className="w-2 h-2 bg-purple-500 rounded-full"></span>{counts.purple}</button>
+    return (
+        <div className="min-h-screen bg-gray-100 dark:bg-gray-900 grid grid-cols-[280px_1fr]">
+            <Sidebar trafficLights={allTls} currentTl={currentTl} />
+            <main className="relative h-screen overflow-hidden flex flex-col">
+                {/* Global Fixed Header */}
+                <header className="h-16 bg-white dark:bg-gray-800 border-b dark:border-gray-700 flex items-center justify-between px-4 z-50 shadow-sm flex-shrink-0">
+                    <div className="flex-1 flex justify-center">
+                        {latestTL && (
+                            <div className={clsx("py-1.5 px-4 flex items-center gap-2 text-white font-bold rounded-full shadow-md animate-pulse-bg transition-all", {
+                                'bg-green-500 shadow-green-500/40': latestTL.colour === 'green',
+                                'bg-yellow-500 shadow-yellow-500/40': latestTL.colour === 'yellow',
+                                'bg-red-500 shadow-red-500/40': latestTL.colour === 'red',
+                                'bg-purple-500 shadow-purple-500/40': latestTL.colour === 'purple',
+                                'bg-gray-500': !['green', 'yellow', 'red', 'purple'].includes(latestTL.colour),
+                            })}>
+                                <span>{latestTL.colour.toUpperCase()}</span>
+                                {latestTL.expires_at && (
+                                    <span className="flex items-center gap-1 text-xs font-normal bg-black/20 px-2 py-0.5 rounded-full">
+                                        <Timer size={12} /> {formatDuration(Math.max(0, Math.floor((new Date(latestTL.expires_at).getTime() - new Date().getTime()) / 1000)))}
+                                    </span>
+                                )}
+                            </div>
+                        )}
                     </div>
-                    <button onClick={handleHomeClick} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors" title="Home"><Home size={20} /></button>
-                    <button onClick={() => window.location.hash = '#/settings'} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors" title="Settings"><SettingsIcon size={20} /></button>
-                    <button onClick={toggleTheme} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors" title="Toggle Theme">{theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}</button>
-                </div>
-            </header>
 
-            <div className="flex-grow overflow-y-auto p-4">
-                {content}
-            </div>
-        </main>
-    </div>
-  );
+                    <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2 bg-gray-100 dark:bg-gray-700 px-3 py-1.5 rounded-full text-xs font-semibold select-none border dark:border-gray-600">
+                            <button onClick={() => handleCountClick('green')} className="text-green-600 dark:text-green-400 flex items-center gap-1 hover:bg-gray-200 dark:hover:bg-gray-600 px-1 rounded"><span className="w-2 h-2 bg-green-500 rounded-full"></span>{counts.green}</button>
+                            <span className="text-gray-300 dark:text-gray-500">|</span>
+                            <button onClick={() => handleCountClick('yellow')} className="text-yellow-600 dark:text-yellow-400 flex items-center gap-1 hover:bg-gray-200 dark:hover:bg-gray-600 px-1 rounded"><span className="w-2 h-2 bg-yellow-500 rounded-full"></span>{counts.yellow}</button>
+                            <span className="text-gray-300 dark:text-gray-500">|</span>
+                            <button onClick={() => handleCountClick('red')} className="text-red-600 dark:text-red-400 flex items-center gap-1 hover:bg-gray-200 dark:hover:bg-gray-600 px-1 rounded"><span className="w-2 h-2 bg-red-500 rounded-full"></span>{counts.red}</button>
+                            <span className="text-gray-300 dark:text-gray-500">|</span>
+                            <button onClick={() => handleCountClick('purple')} className="text-purple-600 dark:text-purple-400 flex items-center gap-1 hover:bg-gray-200 dark:hover:bg-gray-600 px-1 rounded"><span className="w-2 h-2 bg-purple-500 rounded-full"></span>{counts.purple}</button>
+                        </div>
+                        <button onClick={handleHomeClick} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors" title="Home"><Home size={20} /></button>
+                        <button onClick={() => window.location.hash = '#/settings'} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors" title="Settings"><SettingsIcon size={20} /></button>
+                        <button onClick={toggleTheme} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors" title="Toggle Theme">{theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}</button>
+                    </div>
+                </header>
+
+                <div className="flex-grow overflow-y-auto p-4">
+                    {content}
+                </div>
+            </main>
+        </div>
+    );
 };
 
 export default App;
