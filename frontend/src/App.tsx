@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { getTrafficLights, getHistory, getMetrics, getIncidents, overrideColour, getTopOffenders, getSettings, updateSettings, getSystemConfig, TrafficLightState, MetricRecord, IncidentRecord, TopOffender, AppSettings, SystemLimits } from './api';
-import { getMetricColor, inferOverallColor, MetricInference } from './utils/statusUtils';
+import { getMetricColor, inferOverallColor, MetricInference, getMetricSummary } from './utils/statusUtils';
 import TrafficLightCard from './components/TrafficLightCard';
 import MetricsChart from './components/MetricsChart';
 import EnumMetricDisplay from './components/EnumMetricDisplay';
 import StateTimelineChart from './components/StateTimelineChart';
 import Sidebar from './components/Sidebar';
 import clsx from 'clsx';
-import { Filter, AlertTriangle, Moon, Sun, Search, BarChartHorizontal, Settings as SettingsIcon, CheckCircle, Timer, Home } from 'lucide-react';
+import { Filter, AlertTriangle, Moon, Sun, BarChartHorizontal, Settings as SettingsIcon, Timer, Home } from 'lucide-react';
 
 const formatDuration = (seconds: number) => {
     const val = Math.max(0, seconds);
@@ -177,8 +177,10 @@ const Dashboard: React.FC<DashboardProps> = ({ tls, loading, filters, setFilters
 const TopOffendersReport: React.FC = () => {
     const [offenders, setOffenders] = useState<TopOffender[]>([]);
     const [histories, setHistories] = useState<Record<string, TrafficLightState[]>>({});
-    const [hours, setHours] = useState(24);
+    const [hours, setHoursState] = useState(24);
     const [loading, setLoading] = useState(true);
+
+    const setHours = (h: number) => setHoursState(h);
 
     useEffect(() => {
         setLoading(true);
@@ -315,12 +317,10 @@ const SettingsPage: React.FC = () => {
 
 const IncidentsReport: React.FC = () => {
     const [incidents, setIncidents] = useState<IncidentRecord[]>([]);
-    const [hours, setHours] = useState(24);
-    const [loading, setLoading] = useState(true);
+    const loading = !incidents.length;
     useEffect(() => {
-        setLoading(true);
-        getIncidents(hours).then(data => { setIncidents(data || []); setLoading(false); }).catch(() => setLoading(false));
-    }, [hours]);
+        getIncidents(24).then(data => { setIncidents(data || []); }).catch(console.error);
+    }, []);
     return (
         <div className="p-4 pt-16">
             <button onClick={() => window.location.hash = '#/'} className="mb-4 text-blue-500 hover:underline">&larr; Back</button>
@@ -346,7 +346,6 @@ const Details: React.FC<{ cls: string, grp: string, tl: string }> = ({ cls, grp,
     const [history, setHistory] = useState<TrafficLightState[]>([]);
     const [metrics, setMetrics] = useState<MetricRecord[]>([]);
     const [loading, setLoading] = useState(true);
-    const [chartDomain, setChartDomain] = useState<[number | 'dataMin', number | 'dataMax']>(['dataMin', 'dataMax']);
 
     useEffect(() => {
         let isMounted = true;
@@ -361,12 +360,35 @@ const Details: React.FC<{ cls: string, grp: string, tl: string }> = ({ cls, grp,
     const aggregatedHistory = useMemo(() => {
         const sorted = [...history].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
         const groups: any[] = []; let cur: any = null;
+
+        // Helper to normalize timestamp for matching (strip milliseconds)
+        const norm = (ts: string) => ts.split('.')[0].replace('Z', '');
+
         for (const r of sorted) {
-            if (!cur || r.colour !== cur.colour) { if (cur) groups.push(cur); cur = { colour: r.colour, start: r.timestamp, end: r.timestamp, count: 1, description: r.description }; }
-            else { cur.end = r.timestamp; cur.count++; cur.description = r.description || cur.description; }
+            const rNorm = norm(r.timestamp);
+            // Find metrics for this timestamp with fuzzy/normalized match
+            const metricsAtTime = metrics.filter(m => norm(m.timestamp) === rNorm);
+            const dynamicSummary = getMetricSummary(metricsAtTime);
+
+            if (!cur || r.colour !== cur.colour) {
+                if (cur) groups.push(cur);
+                cur = {
+                    colour: r.colour,
+                    start: r.timestamp,
+                    end: r.timestamp,
+                    count: 1,
+                    description: dynamicSummary || r.description
+                };
+            } else {
+                cur.end = r.timestamp;
+                cur.count++;
+                // Prioritize metric-based summary for transparency
+                if (dynamicSummary) cur.description = dynamicSummary;
+                else if (r.description) cur.description = r.description;
+            }
         }
         if (cur) groups.push(cur); return groups.reverse();
-    }, [history]);
+    }, [history, metrics]);
 
     const uniqueMetricKeys = useMemo(() => {
         return Array.from(new Set(metrics.map(m => m.key))).sort();

@@ -78,3 +78,17 @@ export const inferOverallColor = (inferences: MetricInference[]): StatusColor =>
 
 	return highest;
 };
+
+/**
+ * Generates a concise summary string of metric states.
+ * Example: "status: red (locked), CPU: green (15%)"
+ */
+export const getMetricSummary = (metrics: MetricRecord[]): string => {
+	if (metrics.length === 0) return "";
+
+	return metrics.map(m => {
+		const color = getMetricColor(m);
+		const val = m.value_str || m.value;
+		return `${m.key}: ${color} (${val}${m.unit || ''})`;
+	}).join(", ");
+};
