@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import Chart from 'react-apexcharts';
+import { ApexOptions } from 'apexcharts';
 import { MetricRecord } from '../api';
 
 interface Props {
@@ -58,7 +59,7 @@ const MetricsChart: React.FC<Props> = ({ data, metricKey, domain, onZoom }) => {
     data: filteredData.map(d => [d.timeNum, d.value])
   }];
 
-  const options: ApexCharts.ApexOptions = {
+  const options: ApexOptions = {
     chart: {
       type: 'line',
       height: '100%',

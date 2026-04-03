@@ -1,5 +1,6 @@
 import React from 'react';
 import Chart from 'react-apexcharts';
+import { ApexOptions } from 'apexcharts';
 import { TrafficLightState } from '../api';
 
 interface Props {
@@ -65,7 +66,7 @@ const StateTimelineChart: React.FC<Props> = ({ history, domain }) => {
     data: chartData.map((d) => [d.time, d.value])
   }];
 
-  const options: ApexCharts.ApexOptions = {
+  const options: ApexOptions = {
     chart: {
       type: 'area',
       height: '100%',
@@ -97,7 +98,7 @@ const StateTimelineChart: React.FC<Props> = ({ history, domain }) => {
       max: 1.1
     },
     tooltip: {
-      custom: function({series, seriesIndex, dataPointIndex, w}) {
+      custom: function({ dataPointIndex }: any) {
          const data = chartData[dataPointIndex];
          if (!data) return '';
          const date = new Date(data.time).toLocaleString();
