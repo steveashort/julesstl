@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceArea } from 'recharts';
+import React, { useMemo } from 'react';
+import Chart from 'react-apexcharts';
 import { MetricRecord } from '../api';
 
 interface Props {
@@ -10,9 +10,6 @@ interface Props {
 }
 
 const MetricsChart: React.FC<Props> = ({ data, metricKey, domain, onZoom }) => {
-  const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null);
-  const [refAreaRight, setRefAreaRight] = useState<number | null>(null);
-
   const filteredData = useMemo(() => data
     .filter(d => d.key === metricKey && d.metric_type === 'gauge')
     .map(d => ({
@@ -56,51 +53,84 @@ const MetricsChart: React.FC<Props> = ({ data, metricKey, domain, onZoom }) => {
   const greenStop = (thresholds.greenMax / yMax) * 100;
   const yellowStop = (thresholds.yellowMax / yMax) * 100;
 
-  const zoom = () => {
-    if (refAreaLeft === refAreaRight || refAreaRight === null || refAreaLeft === null) {
-      setRefAreaLeft(null); setRefAreaRight(null);
-      return;
+  const series = [{
+    name: metricKey,
+    data: filteredData.map(d => [d.timeNum, d.value])
+  }];
+
+  const options: ApexCharts.ApexOptions = {
+    chart: {
+      type: 'line',
+      height: '100%',
+      animations: { enabled: false },
+      toolbar: {
+        autoSelected: 'zoom',
+        tools: {
+          pan: false,
+          download: false,
+          reset: false
+        }
+      },
+      events: {
+        zoomed: function(chartContext, { xaxis }) {
+          if (xaxis && xaxis.min !== undefined && xaxis.max !== undefined) {
+             onZoom(xaxis.min, xaxis.max);
+          }
+        }
+      }
+    },
+    stroke: {
+      curve: 'straight',
+      width: 3,
+    },
+    fill: {
+      type: 'gradient',
+      gradient: {
+        type: 'vertical',
+        shadeIntensity: 1,
+        colorStops: [
+          { offset: 0, color: "#ef4444", opacity: 1 },
+          { offset: Math.max(0, 100 - yellowStop), color: "#ef4444", opacity: 1 },
+          { offset: Math.max(0, 100 - yellowStop), color: "#eab308", opacity: 1 },
+          { offset: Math.max(0, 100 - greenStop), color: "#eab308", opacity: 1 },
+          { offset: Math.max(0, 100 - greenStop), color: "#22c55e", opacity: 1 },
+          { offset: 100, color: "#22c55e", opacity: 1 }
+        ]
+      }
+    },
+    xaxis: {
+      type: 'datetime',
+      min: currentMin,
+      max: currentMax,
+      labels: {
+        datetimeUTC: false,
+      }
+    },
+    yaxis: {
+      min: 0,
+      max: yMax,
+      labels: {
+        style: { fontSize: '10px' }
+      }
+    },
+    tooltip: {
+      x: { format: 'dd MMM yyyy HH:mm:ss' }
+    },
+    dataLabels: { enabled: false },
+    grid: {
+      show: true,
+      strokeDashArray: 3,
+      xaxis: { lines: { show: false } },
+      yaxis: { lines: { show: true } }
     }
-    let [l, r] = [refAreaLeft, refAreaRight];
-    if (l > r) [l, r] = [r, l];
-    setRefAreaLeft(null); setRefAreaRight(null);
-    onZoom(l, r);
   };
-
-  const isMultiDay = (currentMax - currentMin) > 86400000;
-  const formatXAxis = (time: number) => {
-    const d = new Date(time);
-    return isMultiDay ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : d.toLocaleTimeString();
-  };
-
-  const gradientId = `grad-${metricKey.replace(/[^a-zA-Z0-9]/g, '-')}`;
 
   return (
     <div className="h-64 w-full select-none">
       <h4 className="text-center text-sm font-bold mb-2 dark:text-gray-300 uppercase tracking-wider">{metricKey}</h4>
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={filteredData} margin={{ top: 5, right: 20, left: -20, bottom: 5 }}
-            onMouseDown={(e) => e && setRefAreaLeft(Number(e.activeLabel))}
-            onMouseMove={(e) => refAreaLeft && e && setRefAreaRight(Number(e.activeLabel))}
-            onMouseUp={zoom}>
-          <defs>
-            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#ef4444" />
-              <stop offset={`${Math.max(0, 100 - yellowStop)}%`} stopColor="#ef4444" />
-              <stop offset={`${Math.max(0, 100 - yellowStop)}%`} stopColor="#eab308" />
-              <stop offset={`${Math.max(0, 100 - greenStop)}%`} stopColor="#eab308" />
-              <stop offset={`${Math.max(0, 100 - greenStop)}%`} stopColor="#22c55e" />
-              <stop offset="100%" stopColor="#22c55e" />
-            </linearGradient>
-          </defs>
-          <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.1} />
-          <XAxis dataKey="timeNum" type="number" domain={[currentMin, currentMax]} tickFormatter={formatXAxis} hide />
-          <YAxis domain={[0, yMax]} width={40} tick={{fontSize: 10}} />
-          <Tooltip labelFormatter={(t) => new Date(t).toLocaleString()} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
-          <Line type="linear" dataKey="value" stroke={`url(#${gradientId})`} strokeWidth={3} dot={false} activeDot={{ r: 4 }} animationDuration={300} />
-          {refAreaLeft && refAreaRight && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} fillOpacity={0.1} fill="#6366f1" />}
-        </LineChart>
-      </ResponsiveContainer>
+      <div className="h-[220px] w-full">
+        <Chart options={options} series={series} type="line" height="100%" />
+      </div>
     </div>
   );
 };

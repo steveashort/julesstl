@@ -1,5 +1,5 @@
 import React from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import Chart from 'react-apexcharts';
 import { TrafficLightState } from '../api';
 
 interface Props {
@@ -8,7 +8,6 @@ interface Props {
 }
 
 const StateTimelineChart: React.FC<Props> = ({ history, domain }) => {
-  
   const colorMap: { [key: string]: string } = {
     green: '#22c55e', // green-500
     yellow: '#eab308',// yellow-500
@@ -38,14 +37,7 @@ const StateTimelineChart: React.FC<Props> = ({ history, domain }) => {
         plotPoints.push({ time: item.endTimestamp, colour: item.colour, description: item.description, value: 1 });
     });
     return plotPoints;
-
   }, [history]);
-
-  const formatXAxis = (timeNum: number) => {
-    return new Date(timeNum).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  };
-
-  const gradientId = "colorGradient";
 
   // Calculate gradient offsets
   const offsets = React.useMemo(() => {
@@ -55,64 +47,85 @@ const StateTimelineChart: React.FC<Props> = ({ history, domain }) => {
     const totalDuration = maxTime - minTime;
     if (totalDuration === 0) return null;
 
-    let lastTime = minTime;
     return chartData.map((p) => {
-        const offset = ((p.time - minTime) / totalDuration * 100).toFixed(3);
-        lastTime = p.time;
-        return { offset: `${offset}%`, color: colorMap[p.colour] || colorMap.gray };
+        const offset = ((p.time - minTime) / totalDuration * 100);
+        return { offset: offset, color: colorMap[p.colour] || colorMap.gray, opacity: 0.8 };
     });
   }, [chartData]);
-
 
   if (chartData.length === 0) {
     return <div className="text-center text-gray-500 py-4">No history to display in timeline.</div>;
   }
+  
+  const currentMin = typeof domain[0] === 'number' ? domain[0] : chartData[0].time;
+  const currentMax = typeof domain[1] === 'number' ? domain[1] : chartData[chartData.length - 1].time;
+
+  const series = [{
+    name: 'State',
+    data: chartData.map((d) => [d.time, d.value])
+  }];
+
+  const options: ApexCharts.ApexOptions = {
+    chart: {
+      type: 'area',
+      height: '100%',
+      animations: { enabled: false },
+      toolbar: { show: false },
+      zoom: { enabled: false }
+    },
+    dataLabels: { enabled: false },
+    stroke: {
+      curve: 'stepline',
+      width: 2,
+    },
+    fill: {
+      type: 'gradient',
+      gradient: {
+        type: 'horizontal',
+        colorStops: offsets ? offsets : []
+      }
+    },
+    xaxis: {
+      type: 'datetime',
+      min: currentMin,
+      max: currentMax,
+      labels: { datetimeUTC: false }
+    },
+    yaxis: {
+      show: false,
+      min: 0,
+      max: 1.1
+    },
+    tooltip: {
+      custom: function({series, seriesIndex, dataPointIndex, w}) {
+         const data = chartData[dataPointIndex];
+         if (!data) return '';
+         const date = new Date(data.time).toLocaleString();
+         return `
+            <div class="bg-white dark:bg-gray-800 p-2 border dark:border-gray-700 rounded shadow-md">
+                <p class="font-semibold capitalize" style="color: ${colorMap[data.colour] || colorMap.gray}">${data.colour}</p>
+                <p class="text-sm">${date}</p>
+                <p class="text-xs text-gray-500">${data.description}</p>
+            </div>
+         `;
+      }
+    },
+    grid: {
+      show: true,
+      strokeDashArray: 3,
+      xaxis: { lines: { show: true } },
+      yaxis: { lines: { show: false } }
+    }
+  };
 
   return (
     <div className="h-40 w-full relative">
         <h4 className="text-center font-semibold mb-4 dark:text-gray-200">State Timeline</h4>
-        <ResponsiveContainer width="100%" height="100%">
-            <AreaChart 
-                data={chartData}
-                margin={{ top: 5, right: 30, left: 20, bottom: 20 }}
-            >
-                <defs>
-                    <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="0">
-                        {offsets?.map(({ offset, color }, i) => (
-                            <stop key={i} offset={offset} stopColor={color} />
-                        ))}
-                    </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#ccc" strokeOpacity={0.3}/>
-                <XAxis 
-                    dataKey="time" 
-                    type="number" 
-                    domain={domain} 
-                    tickFormatter={formatXAxis} 
-                    scale="time"
-                    minTickGap={40}
-                />
-                <YAxis hide={true} domain={[0, 'dataMax']} />
-                <Tooltip 
-                    content={({ active, payload }) => {
-                        if (active && payload && payload.length) {
-                            const data = payload[0].payload;
-                            return (
-                                <div className="bg-white dark:bg-gray-800 p-2 border dark:border-gray-700 rounded shadow-md">
-                                    <p className="font-semibold capitalize" style={{ color: colorMap[data.colour] || colorMap.gray }}>{data.colour}</p>
-                                    <p className="text-sm">{new Date(data.time).toLocaleString()}</p>
-                                    <p className="text-xs text-gray-500">{data.description}</p>
-                                </div>
-                            );
-                        }
-                        return null;
-                    }}
-                />
-                <Area type="step" dataKey="value" stroke={`url(#${gradientId})`} fill={`url(#${gradientId})`} strokeWidth={2} />
-            </AreaChart>
-        </ResponsiveContainer>
+        <div className="h-[120px] w-full">
+            <Chart options={options} series={series} type="area" height="100%" />
+        </div>
     </div>
   );
 };
 
-export default StateTimelineChart;
+export default StateTimelineChart;
